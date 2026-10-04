@@ -1,3 +1,10 @@
+HISTORICAL NOTE
+
+This document describes an earlier JSON-storage prototype and predates the
+current PostgreSQL persistence and automated test suite. Its findings are
+historical, not a statement of current behavior. Refer to README.md and
+PROJECT_STRUCTURE.md for current project information.
+
 DEBUGGING SUMMARY
 
 EnergySwap v1 is a Hedera-based peer-to-peer energy trading prototype with a Node/Express backend and a Vite frontend. The backend is structured around offer posting, trade execution, HBAR pricing, and external news data collection. The frontend integrates wallet identity and transaction workflows using Hedera wallet tools.

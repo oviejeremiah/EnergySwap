@@ -1,5 +1,10 @@
 # EnergySwap v1 Debugging Notes
 
+> Historical note: this report describes an earlier JSON-storage prototype.
+> The current codebase has PostgreSQL persistence and automated tests. Use
+> [README.md](README.md) and [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) as the
+> current project references; the observations below are retained for history.
+
 ## Project overview
 EnergySwap v1 is a Hedera-based peer-to-peer energy trading demo with:
 - a Node/Express backend in `EnergySwapBackend`

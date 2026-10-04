@@ -28,6 +28,10 @@ Architecture
 - .github/workflows/backend-ci.yml: backend/API and PostgreSQL integration
   tests plus a frontend production build.
 
+For a file-by-file guide to the repository, including configuration, migrations,
+operator scripts, tests, and deployment files, see
+[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
+
 Local development
 -----------------
 
