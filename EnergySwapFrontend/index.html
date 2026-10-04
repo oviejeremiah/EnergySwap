@@ -875,6 +875,29 @@
                 font-size: 14px;
             }
 
+            .energy-evidence-note {
+                margin-bottom: 18px;
+                padding: 16px 18px;
+                border: 1px solid rgba(127, 240, 164, 0.18);
+                border-left: 3px solid var(--accent);
+                border-radius: 12px;
+                background: rgba(127, 240, 164, 0.045);
+            }
+
+            .energy-evidence-note h2 {
+                margin: 0 0 5px;
+                color: var(--t-primary);
+                font-size: 14px;
+                font-weight: 600;
+            }
+
+            .energy-evidence-note p {
+                margin: 0;
+                color: var(--t-secondary);
+                font-size: 13px;
+                line-height: 1.6;
+            }
+
             .two-col {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
@@ -2700,6 +2723,17 @@
             <div class="page-layout">
                 <!-- Main content -->
                 <main class="main-content">
+                    <section class="energy-evidence-note" aria-labelledby="energy-evidence-title">
+                        <h2 id="energy-evidence-title">About the energy amounts</h2>
+                        <p>
+                            The kWh amount in an offer is provided by the prosumer. You do not need your own smart
+                            meter to trade. A meter gateway can report generated energy for a defined time period and
+                            create a record both parties can inspect. In this prototype, meter readings are not linked
+                            to individual offers or trades. A record shows what the gateway reported; it does not
+                            independently prove that energy was physically delivered.
+                        </p>
+                    </section>
+
                     <!-- ─── CONSUMER VIEW ─── -->
                     <div id="consumer-view">
                         <!-- Web3 Identity Bar — Wallet Address as UserID -->
