@@ -1,0 +1,3978 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <script type="module" src="/@vite/client"></script>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>EnergySwap | P2P Energy Trading on Hedera</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Unbounded:wght@400;600;700;900&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            /* ═══════════════════════════════════════════════════
+           DESIGN TOKENS & VARIABLES
+        ═══════════════════════════════════════════════════ */
+            :root {
+                /* Classic terminal palette */
+                --void: #070b10;
+                --deep: #0a1118;
+                --base: #111c27;
+                --surface: #121d2a;
+                --surface-2: #182736;
+                --surface-3: #1d3043;
+                --surface-soft: rgba(17, 28, 39, 0.86);
+                --border: rgba(255, 255, 255, 0.06);
+                --border-glow: rgba(76, 175, 101, 0.25);
+
+                /* Brand greens */
+                --g-900: #0b2d1a;
+                --g-700: #1d7a45;
+                --g-600: #2b9d5d;
+                --g-500: #3bb970;
+                --g-400: #61d687;
+                --g-300: #9fe6b4;
+                --g-200: #d3f5df;
+                --accent: #7ff0a4;
+                --accent-dim: rgba(127, 240, 164, 0.08);
+                --accent-border: rgba(127, 240, 164, 0.24);
+
+                /* Semantic */
+                --red: #ff6b6b;
+                --amber: #f4c95d;
+                --blue: #7ab8ff;
+                --purple: #b9a1ff;
+
+                /* Text */
+                --t-primary: #edf8ff;
+                --t-secondary: #b4c4d6;
+                --t-muted: #6d7d8d;
+                --t-accent: var(--accent);
+
+                /* Typography */
+                --font-display: 'Unbounded', sans-serif;
+                --font-body: 'Space Grotesk', sans-serif;
+                --font-mono: 'JetBrains Mono', monospace;
+
+                /* Effects */
+                --glow-sm: 0 0 10px rgba(127, 240, 164, 0.14);
+                --glow-md: 0 0 18px rgba(127, 240, 164, 0.2);
+                --glow-lg: 0 0 30px rgba(127, 240, 164, 0.12);
+                --shadow-card: 0 18px 40px rgba(0, 0, 0, 0.28), 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+                --shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.18);
+                --glass: rgba(15, 24, 32, 0.82);
+                --wcm-z-index: 10001 !important;
+            }
+
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+
+            html {
+                scroll-behavior: smooth;
+            }
+
+            body {
+                font-family: var(--font-body);
+                background: linear-gradient(180deg, rgba(8, 14, 19, 1) 0%, rgba(7, 11, 16, 1) 100%);
+                color: var(--t-primary);
+                min-height: 100vh;
+                line-height: 1.6;
+                overflow-x: hidden;
+                letter-spacing: -0.01em;
+            }
+
+            button,
+            input {
+                font-family: inherit;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           SCROLLBAR
+        ═══════════════════════════════════════════════════ */
+            ::-webkit-scrollbar {
+                width: 4px;
+            }
+            ::-webkit-scrollbar-track {
+                background: var(--void);
+            }
+            ::-webkit-scrollbar-thumb {
+                background: var(--surface-3);
+                border-radius: 2px;
+            }
+            ::-webkit-scrollbar-thumb:hover {
+                background: var(--g-700);
+            }
+
+            /* ═══════════════════════════════════════════════════
+           NOISE TEXTURE OVERLAY
+        ═══════════════════════════════════════════════════ */
+            body::before {
+                content: '';
+                position: fixed;
+                inset: 0;
+                background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+                pointer-events: none;
+                z-index: 9999;
+                opacity: 0.4;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           ANIMATED GRID BACKGROUND
+        ═══════════════════════════════════════════════════ */
+            .bg-grid {
+                position: fixed;
+                inset: 0;
+                background-image:
+                    linear-gradient(rgba(57, 255, 126, 0.025) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(57, 255, 126, 0.025) 1px, transparent 1px);
+                background-size: 48px 48px;
+                pointer-events: none;
+                z-index: 0;
+            }
+
+            .bg-glow-1 {
+                position: fixed;
+                width: 560px;
+                height: 560px;
+                background: radial-gradient(circle, rgba(127, 240, 164, 0.05) 0%, transparent 62%);
+                top: -180px;
+                left: -120px;
+                pointer-events: none;
+                z-index: 0;
+                animation: floatGlow 14s ease-in-out infinite alternate;
+            }
+            .bg-glow-2 {
+                position: fixed;
+                width: 480px;
+                height: 480px;
+                background: radial-gradient(circle, rgba(122, 184, 255, 0.035) 0%, transparent 62%);
+                bottom: -140px;
+                right: -80px;
+                pointer-events: none;
+                z-index: 0;
+                animation: floatGlow 18s ease-in-out infinite alternate-reverse;
+            }
+            @keyframes floatGlow {
+                from {
+                    transform: translate(0, 0);
+                }
+                to {
+                    transform: translate(50px, 40px);
+                }
+            }
+
+            /* ═══════════════════════════════════════════════════
+           HEADER
+        ═══════════════════════════════════════════════════ */
+            .header {
+                position: sticky;
+                top: 0;
+                z-index: 1000;
+                height: 68px;
+                background: rgba(3, 6, 9, 0.82);
+                backdrop-filter: blur(18px);
+                -webkit-backdrop-filter: blur(18px);
+                border-bottom: 1px solid var(--border);
+                padding: 0 28px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+            }
+
+            .header::after {
+                content: '';
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 1px;
+                background: linear-gradient(90deg, transparent, var(--accent-border), transparent);
+            }
+
+            .logo {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                text-decoration: none;
+            }
+
+            .logo-mark {
+                width: 34px;
+                height: 34px;
+                background: var(--accent);
+                border-radius: 9px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 17px;
+                box-shadow: var(--glow-sm);
+                position: relative;
+                overflow: hidden;
+            }
+            .logo-mark::after {
+                content: '';
+                position: absolute;
+                top: -50%;
+                left: -50%;
+                width: 200%;
+                height: 200%;
+                background: linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.3) 50%, transparent 70%);
+                animation: logoShine 4s ease-in-out infinite;
+            }
+            @keyframes logoShine {
+                0%,
+                100% {
+                    transform: translateX(-100%) rotate(45deg);
+                }
+                50% {
+                    transform: translateX(100%) rotate(45deg);
+                }
+            }
+
+            .logo-name {
+                font-family: var(--font-display);
+                font-weight: 700;
+                font-size: 18px;
+                color: var(--t-primary);
+                letter-spacing: -0.5px;
+            }
+            .logo-name span {
+                color: var(--accent);
+            }
+
+            .header-center {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .hbar-pill {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                padding: 6px 12px;
+                border-radius: 20px;
+                font-family: var(--font-mono);
+                font-size: 12px;
+            }
+
+            .live-dot {
+                width: 6px;
+                height: 6px;
+                background: var(--accent);
+                border-radius: 50%;
+                box-shadow: 0 0 6px var(--accent);
+                animation: livePulse 2s infinite;
+            }
+            @keyframes livePulse {
+                0%,
+                100% {
+                    opacity: 1;
+                    transform: scale(1);
+                }
+                50% {
+                    opacity: 0.4;
+                    transform: scale(0.8);
+                }
+            }
+
+            .hbar-label {
+                color: var(--t-muted);
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 1px;
+            }
+            .hbar-value {
+                color: var(--t-primary);
+                font-weight: 600;
+            }
+            .hbar-change {
+                font-size: 10px;
+                color: var(--g-400);
+            }
+
+            .header-right {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .network-badge {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                background: rgba(57, 255, 126, 0.06);
+                border: 1px solid var(--accent-border);
+                padding: 5px 10px;
+                border-radius: 6px;
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 600;
+                color: var(--accent);
+                letter-spacing: 1px;
+                text-transform: uppercase;
+            }
+
+            /* Wallet connected state */
+            .wallet-chip {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                padding: 6px 6px 6px 12px;
+                border-radius: 24px;
+                cursor: default;
+            }
+
+            .wallet-id-block {
+                line-height: 1.2;
+            }
+            .wallet-role {
+                font-size: 9px;
+                color: var(--t-muted);
+                font-family: var(--font-mono);
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
+            .wallet-addr {
+                font-family: var(--font-mono);
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--accent);
+            }
+
+            .role-chip {
+                padding: 4px 10px;
+                border-radius: 16px;
+                font-size: 10px;
+                font-weight: 700;
+                font-family: var(--font-mono);
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+            }
+            .role-chip.prosumer {
+                background: rgba(57, 255, 126, 0.15);
+                color: var(--accent);
+                border: 1px solid var(--accent-border);
+            }
+            .role-chip.consumer {
+                background: rgba(96, 165, 250, 0.15);
+                color: var(--blue);
+                border: 1px solid rgba(96, 165, 250, 0.3);
+            }
+
+            .btn-disconnect {
+                background: rgba(248, 113, 113, 0.08);
+                color: var(--red);
+                border: 1px solid rgba(248, 113, 113, 0.2);
+                padding: 5px 11px;
+                border-radius: 16px;
+                font-size: 11px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+                font-family: var(--font-body);
+            }
+            .btn-disconnect:hover {
+                background: rgba(248, 113, 113, 0.18);
+                border-color: rgba(248, 113, 113, 0.4);
+            }
+
+            /* ═══════════════════════════════════════════════════
+           STATS TICKER BAR
+        ═══════════════════════════════════════════════════ */
+            .stats-bar {
+                background: linear-gradient(180deg, rgba(8, 15, 22, 0.95), rgba(8, 15, 22, 0.7));
+                border-bottom: 1px solid var(--border);
+                padding: 0 28px;
+                height: 54px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 0;
+                overflow: hidden;
+                box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02);
+            }
+
+            .stat-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 0 28px;
+                border-right: 1px solid var(--border);
+            }
+            .stat-item:last-child {
+                border-right: none;
+            }
+
+            .stat-icon {
+                font-size: 14px;
+                opacity: 0.7;
+            }
+
+            .stat-info {
+            }
+            .stat-value {
+                font-family: var(--font-mono);
+                font-weight: 700;
+                font-size: 15px;
+                color: var(--accent);
+                line-height: 1;
+            }
+            .stat-label {
+                font-size: 9px;
+                color: var(--t-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.8px;
+                line-height: 1;
+                margin-top: 2px;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           ROLE SELECTION SCREEN
+        ═══════════════════════════════════════════════════ */
+            .role-screen {
+                position: fixed;
+                inset: 0;
+                z-index: 9000;
+                background: var(--void);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                overflow: hidden;
+            }
+
+            /* Animated background canvas */
+            #role-bg-canvas {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                opacity: 0.3;
+                pointer-events: none;
+            }
+
+            /* Grid overlay */
+            .role-screen-grid {
+                position: absolute;
+                inset: 0;
+                background-image:
+                    linear-gradient(rgba(57, 255, 126, 0.03) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(57, 255, 126, 0.03) 1px, transparent 1px);
+                background-size: 52px 52px;
+                pointer-events: none;
+            }
+
+            /* Orb glows */
+            .role-orb-1 {
+                position: absolute;
+                width: 800px;
+                height: 800px;
+                background: radial-gradient(circle, rgba(57, 255, 126, 0.08) 0%, transparent 60%);
+                top: -300px;
+                right: -200px;
+                pointer-events: none;
+                animation: floatGlow 12s ease-in-out infinite alternate;
+            }
+            .role-orb-2 {
+                position: absolute;
+                width: 600px;
+                height: 600px;
+                background: radial-gradient(circle, rgba(96, 165, 250, 0.06) 0%, transparent 60%);
+                bottom: -200px;
+                left: -100px;
+                pointer-events: none;
+                animation: floatGlow 16s ease-in-out infinite alternate-reverse;
+            }
+
+            /* Horizontal scan line animation */
+            .role-scan {
+                position: absolute;
+                inset: 0;
+                background: linear-gradient(transparent 0%, rgba(57, 255, 126, 0.015) 50%, transparent 100%);
+                animation: scanLine 8s linear infinite;
+                pointer-events: none;
+            }
+            @keyframes scanLine {
+                0% {
+                    transform: translateY(-100%);
+                }
+                100% {
+                    transform: translateY(100vh);
+                }
+            }
+
+            /* Ticker tape */
+            .role-ticker {
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 36px;
+                background: rgba(57, 255, 126, 0.04);
+                border-bottom: 1px solid rgba(57, 255, 126, 0.1);
+                display: flex;
+                align-items: center;
+                overflow: hidden;
+                z-index: 5;
+            }
+            .role-ticker-track {
+                display: flex;
+                gap: 0;
+                animation: tickerRoll 45s linear infinite;
+                white-space: nowrap;
+            }
+            @keyframes tickerRoll {
+                from {
+                    transform: translateX(0);
+                }
+                to {
+                    transform: translateX(-50%);
+                }
+            }
+
+            .t-item {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 0 24px;
+                font-family: var(--font-mono);
+                font-size: 11px;
+                font-weight: 600;
+                border-right: 1px solid rgba(57, 255, 126, 0.08);
+            }
+            .t-sym {
+                color: rgba(255, 255, 255, 0.35);
+                letter-spacing: 0.5px;
+            }
+            .t-px {
+                color: rgba(255, 255, 255, 0.8);
+            }
+            .t-up {
+                color: var(--accent);
+            }
+            .t-dn {
+                color: var(--red);
+            }
+
+            /* Bottom landscape */
+            .role-landscape {
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 38%;
+                opacity: 0.15;
+                pointer-events: none;
+            }
+
+            /* Content */
+            .role-content {
+                position: relative;
+                z-index: 10;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                padding: 0 20px;
+                max-width: 900px;
+                width: 100%;
+                animation: riseIn 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+            }
+            @keyframes riseIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(40px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            .role-eyebrow {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                background: rgba(57, 255, 126, 0.06);
+                border: 1px solid rgba(57, 255, 126, 0.2);
+                padding: 6px 16px;
+                border-radius: 30px;
+                font-family: var(--font-mono);
+                font-size: 10px;
+                font-weight: 700;
+                color: var(--accent);
+                letter-spacing: 2px;
+                text-transform: uppercase;
+                margin-bottom: 28px;
+            }
+
+            .role-hero-title {
+                font-family: var(--font-display);
+                font-weight: 800;
+                font-size: clamp(42px, 5vw, 68px);
+                line-height: 0.95;
+                margin-bottom: 20px;
+                letter-spacing: -2px;
+            }
+            .role-hero-title .line-1 {
+                display: block;
+                color: #f3f8ff;
+            }
+            .role-hero-title .line-2 {
+                display: block;
+                color: var(--accent);
+            }
+
+            .role-hero-sub {
+                font-size: 16px;
+                color: rgba(255, 255, 255, 0.4);
+                max-width: 460px;
+                margin: 0 auto 48px;
+                line-height: 1.7;
+                font-weight: 300;
+            }
+
+            /* Role cards */
+            .role-cards {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+                width: 100%;
+                max-width: 680px;
+            }
+
+            .role-card {
+                background: rgba(255, 255, 255, 0.015);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 18px;
+                padding: 24px 22px;
+                cursor: pointer;
+                transition: all 0.25s ease;
+                text-align: left;
+                position: relative;
+                overflow: hidden;
+            }
+            .role-card::before {
+                content: '';
+                position: absolute;
+                inset: 0;
+                border-radius: 20px;
+                opacity: 0;
+                transition: opacity 0.3s;
+            }
+            .role-card.prosumer-card::before {
+                background: radial-gradient(circle at 30% 30%, rgba(57, 255, 126, 0.08), transparent 60%);
+            }
+            .role-card.consumer-card::before {
+                background: radial-gradient(circle at 30% 30%, rgba(96, 165, 250, 0.08), transparent 60%);
+            }
+            .role-card:hover::before {
+                opacity: 1;
+            }
+            .role-card:hover {
+                border-color: rgba(255, 255, 255, 0.15);
+                transform: translateY(-4px);
+                box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+            }
+            .role-card.prosumer-card:hover {
+                border-color: var(--accent-border);
+                box-shadow: 0 24px 60px rgba(57, 255, 126, 0.12);
+            }
+            .role-card.consumer-card:hover {
+                border-color: rgba(96, 165, 250, 0.35);
+                box-shadow: 0 24px 60px rgba(96, 165, 250, 0.12);
+            }
+
+            .role-card-top {
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                margin-bottom: 16px;
+            }
+            .role-card-badge {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                text-transform: uppercase;
+                padding: 4px 9px;
+                border-radius: 6px;
+            }
+            .prosumer-card .role-card-badge {
+                background: rgba(57, 255, 126, 0.1);
+                color: var(--accent);
+            }
+            .consumer-card .role-card-badge {
+                background: rgba(96, 165, 250, 0.1);
+                color: var(--blue);
+            }
+
+            .role-card-title {
+                font-family: var(--font-display);
+                font-weight: 700;
+                font-size: 20px;
+                margin-bottom: 8px;
+                letter-spacing: -0.5px;
+            }
+            .role-card-desc {
+                font-size: 13px;
+                color: rgba(255, 255, 255, 0.4);
+                line-height: 1.6;
+                margin-bottom: 24px;
+            }
+
+            .btn-role {
+                width: 100%;
+                padding: 13px;
+                border: none;
+                border-radius: 12px;
+                font-family: var(--font-mono);
+                font-weight: 700;
+                font-size: 12px;
+                cursor: pointer;
+                transition: all 0.2s;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+                position: relative;
+                overflow: hidden;
+            }
+            .btn-role::after {
+                content: '';
+                position: absolute;
+                inset: 0;
+                background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent);
+            }
+
+            .btn-role.prosumer {
+                background: linear-gradient(180deg, #8af4b0, #6be39d);
+                color: #07150d;
+                box-shadow: 0 12px 26px rgba(95, 224, 148, 0.18);
+            }
+            .btn-role.prosumer:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 14px 28px rgba(95, 224, 148, 0.24);
+            }
+
+            .btn-role.consumer {
+                background: rgba(255, 255, 255, 0.02);
+                color: var(--blue);
+                border: 1.5px solid rgba(122, 184, 255, 0.35);
+            }
+            .btn-role.consumer:hover {
+                background: rgba(122, 184, 255, 0.05);
+                border-color: rgba(122, 184, 255, 0.5);
+                transform: translateY(-1px);
+            }
+
+            .role-footnote {
+                margin-top: 28px;
+                font-size: 12px;
+                color: rgba(255, 255, 255, 0.18);
+                font-family: var(--font-mono);
+            }
+
+            /* Status on role screen */
+            #role-status {
+                position: absolute;
+                bottom: 24px;
+                left: 50%;
+                transform: translateX(-50%);
+                min-width: 380px;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           DASHBOARD LAYOUT
+        ═══════════════════════════════════════════════════ */
+            .dashboard {
+                position: relative;
+                z-index: 1;
+            }
+
+            .page-layout {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) 400px;
+                min-height: calc(100vh - 112px);
+                align-items: start;
+            }
+
+            .main-content {
+                padding: 28px 20px 28px 28px;
+                min-width: 0;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           CARDS
+        ═══════════════════════════════════════════════════ */
+            .card {
+                background: linear-gradient(180deg, rgba(18, 29, 42, 0.88), rgba(10, 17, 24, 0.94));
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 18px;
+                padding: 22px;
+                margin-bottom: 18px;
+                box-shadow: var(--shadow-card);
+                position: relative;
+                overflow: hidden;
+                backdrop-filter: blur(6px);
+                -webkit-backdrop-filter: blur(6px);
+            }
+
+            .card:hover {
+                border-color: rgba(255, 255, 255, 0.08);
+                transform: translateY(-1px);
+                transition:
+                    transform 0.2s ease,
+                    border-color 0.2s ease,
+                    box-shadow 0.2s ease;
+            }
+            .card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 1px;
+                background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+            }
+
+            .card-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 20px;
+            }
+
+            .card-title {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-family: var(--font-display);
+                font-weight: 600;
+                font-size: 15px;
+                color: var(--t-primary);
+                letter-spacing: -0.3px;
+            }
+
+            .card-icon {
+                width: 30px;
+                height: 30px;
+                background: var(--accent-dim);
+                border: 1px solid var(--accent-border);
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+            }
+
+            .two-col {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           IDENTITY BAR (Wallet Address as UserID — Web3 native)
+        ═══════════════════════════════════════════════════ */
+            .identity-bar {
+                background: linear-gradient(135deg, rgba(57, 255, 126, 0.08), rgba(12, 22, 32, 0.9));
+                border: 1px solid var(--accent-border);
+                border-radius: 18px;
+                padding: 18px 20px;
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 16px;
+                box-shadow: 0 18px 40px rgba(48, 196, 114, 0.08);
+            }
+
+            .identity-left {
+                display: flex;
+                align-items: center;
+                gap: 14px;
+            }
+
+            .identity-avatar {
+                width: 44px;
+                height: 44px;
+                background: linear-gradient(135deg, rgba(57, 255, 126, 0.2), rgba(57, 255, 126, 0.05));
+                border: 1px solid var(--accent-border);
+                border-radius: 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 20px;
+                flex-shrink: 0;
+            }
+
+            .identity-info {
+            }
+            .identity-role-label {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                color: var(--accent);
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                margin-bottom: 3px;
+            }
+            .identity-address {
+                font-family: var(--font-mono);
+                font-size: 18px;
+                font-weight: 700;
+                color: var(--t-primary);
+                letter-spacing: -0.5px;
+            }
+            .identity-address-sub {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: var(--t-muted);
+                margin-top: 2px;
+            }
+
+            .identity-right {
+                display: flex;
+                flex-direction: column;
+                align-items: flex-end;
+                gap: 6px;
+            }
+
+            .identity-status-dot {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: var(--accent);
+                font-weight: 600;
+            }
+
+            .identity-hashscan-link {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: var(--t-muted);
+                text-decoration: none;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                transition: color 0.2s;
+            }
+            .identity-hashscan-link:hover {
+                color: var(--accent);
+            }
+
+            /* ═══════════════════════════════════════════════════
+           EXECUTE TRADE — dark terminal
+        ═══════════════════════════════════════════════════ */
+            .terminal-wrap {
+                background: #050b14;
+                border: 1px solid rgba(57, 255, 126, 0.12);
+                border-radius: 14px;
+                overflow: hidden;
+            }
+
+            .terminal-topbar {
+                background: #080f1a;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+                padding: 8px 14px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .terminal-dots {
+                display: flex;
+                gap: 5px;
+            }
+            .terminal-dot {
+                width: 9px;
+                height: 9px;
+                border-radius: 50%;
+            }
+            .terminal-dot.red {
+                background: #f87171;
+            }
+            .terminal-dot.amber {
+                background: #fbbf24;
+            }
+            .terminal-dot.green {
+                background: #4ade80;
+            }
+            .terminal-label {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: rgba(255, 255, 255, 0.2);
+                letter-spacing: 1px;
+            }
+            .terminal-net {
+                margin-left: auto;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: var(--accent);
+                font-weight: 700;
+                letter-spacing: 0.5px;
+            }
+
+            /* Rate strip */
+            .tc-rates {
+                display: flex;
+                align-items: stretch;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            }
+            .tc-rate {
+                flex: 1;
+                padding: 10px 12px;
+                border-right: 1px solid rgba(255, 255, 255, 0.04);
+            }
+            .tc-rate:last-child {
+                border-right: none;
+            }
+            .tc-rate-lbl {
+                font-family: var(--font-mono);
+                font-size: 8px;
+                color: rgba(255, 255, 255, 0.25);
+                letter-spacing: 0.8px;
+                text-transform: uppercase;
+                margin-bottom: 3px;
+            }
+            .tc-rate-val {
+                font-family: var(--font-mono);
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--accent);
+            }
+            .tc-rate-val.neutral {
+                color: rgba(255, 255, 255, 0.5);
+            }
+
+            /* Swap inputs */
+            .tc-inputs {
+                padding: 12px 14px;
+            }
+
+            .tc-input-panel {
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 10px;
+                padding: 12px 14px;
+                transition:
+                    border-color 0.2s,
+                    background 0.2s;
+            }
+            .tc-input-panel:focus-within {
+                border-color: rgba(57, 255, 126, 0.3);
+                background: rgba(57, 255, 126, 0.02);
+            }
+
+            .tc-input-top {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 8px;
+            }
+            .tc-input-lbl {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.3);
+                letter-spacing: 0.8px;
+                text-transform: uppercase;
+            }
+            .tc-input-bal {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.2);
+            }
+            .tc-input-bal span {
+                color: rgba(57, 255, 126, 0.6);
+            }
+
+            .tc-input-row {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .tc-input-row input {
+                flex: 1;
+                min-width: 0;
+                width: 0;
+                background: transparent;
+                border: none;
+                outline: none;
+                font-size: 28px;
+                font-family: var(--font-mono);
+                font-weight: 700;
+                color: #fff;
+            }
+            .tc-input-row input::placeholder {
+                color: rgba(255, 255, 255, 0.1);
+            }
+            .tc-input-row input[readonly] {
+                color: rgba(57, 255, 126, 0.8);
+                cursor: default;
+            }
+
+            .tc-token {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 22px;
+                padding: 6px 12px 6px 8px;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .tc-token-icon {
+                width: 22px;
+                height: 22px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .tc-token-icon.hbar {
+                background: linear-gradient(135deg, #1a3a5c, #2563eb);
+                color: #93c5fd;
+                font-family: var(--font-mono);
+            }
+            .tc-token-icon.kwh {
+                background: linear-gradient(135deg, #052e16, #15803d);
+                color: var(--accent);
+            }
+            .tc-token-name {
+                font-family: var(--font-mono);
+                font-size: 12px;
+                font-weight: 700;
+                color: #fff;
+            }
+
+            .tc-arrow {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 28px;
+                position: relative;
+            }
+            .tc-arrow::before {
+                content: '';
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 50%;
+                height: 1px;
+                background: linear-gradient(90deg, transparent, rgba(57, 255, 126, 0.12), transparent);
+            }
+            .tc-arrow-btn {
+                width: 28px;
+                height: 28px;
+                background: #080f1a;
+                border: 1px solid rgba(57, 255, 126, 0.2);
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: var(--accent);
+                font-size: 14px;
+                z-index: 1;
+            }
+
+            /* Info box */
+            .tc-info {
+                margin: 0 14px 12px;
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 9px;
+                padding: 10px 12px;
+            }
+            .tc-info-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 3px 0;
+            }
+            .tc-info-lbl {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: rgba(255, 255, 255, 0.25);
+            }
+            .tc-info-val {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                font-weight: 600;
+                color: rgba(255, 255, 255, 0.6);
+            }
+            .tc-info-val.hi {
+                color: var(--accent);
+            }
+            .tc-info-divider {
+                height: 1px;
+                background: rgba(255, 255, 255, 0.04);
+                margin: 5px 0;
+            }
+
+            /* Execute button */
+            .tc-exec {
+                padding: 0 14px 14px;
+            }
+            #confirm-trade-btn {
+                width: 100%;
+                padding: 14px;
+                background: linear-gradient(135deg, #15803d, var(--accent));
+                color: var(--void);
+                border: none;
+                border-radius: 10px;
+                font-family: var(--font-mono);
+                font-weight: 800;
+                font-size: 13px;
+                cursor: pointer;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+                transition: all 0.2s;
+                position: relative;
+                overflow: hidden;
+            }
+            #confirm-trade-btn::before {
+                content: '';
+                position: absolute;
+                inset: 0;
+                background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), transparent);
+            }
+            #confirm-trade-btn:hover:not(:disabled) {
+                transform: translateY(-1px);
+                box-shadow: 0 8px 28px rgba(57, 255, 126, 0.35);
+            }
+            #confirm-trade-btn:disabled {
+                background: rgba(255, 255, 255, 0.05);
+                color: rgba(255, 255, 255, 0.2);
+                cursor: not-allowed;
+            }
+
+            /* Security strip */
+            .tc-security {
+                border-top: 1px solid rgba(255, 255, 255, 0.04);
+                padding: 8px 14px;
+                display: flex;
+                gap: 12px;
+            }
+            .tc-sec-item {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.2);
+            }
+
+            /* ═══════════════════════════════════════════════════
+           MARKET CHART TERMINAL
+        ═══════════════════════════════════════════════════ */
+            .mc-terminal {
+                background: #050b14;
+                border: 1px solid rgba(57, 255, 126, 0.1);
+                border-radius: 14px;
+                overflow: hidden;
+            }
+
+            .mc-sym-bar {
+                background: #080f1a;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+                padding: 7px 12px;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                overflow: hidden;
+            }
+            .mc-sym {
+                padding: 3px 10px;
+                border-radius: 5px;
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                color: rgba(255, 255, 255, 0.3);
+                background: transparent;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                white-space: nowrap;
+            }
+            .mc-sym.active {
+                color: var(--accent);
+                background: rgba(57, 255, 126, 0.07);
+                border-color: rgba(57, 255, 126, 0.25);
+            }
+
+            .mc-sym-gap {
+                flex: 1;
+            }
+            .mc-tf-group {
+                display: flex;
+                gap: 2px;
+            }
+            .mc-tf {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                color: rgba(255, 255, 255, 0.2);
+                padding: 2px 6px;
+                border-radius: 3px;
+                background: transparent;
+                border: none;
+            }
+            .mc-tf.active {
+                color: var(--accent);
+                background: rgba(57, 255, 126, 0.1);
+            }
+
+            .mc-price-area {
+                padding: 10px 14px 8px;
+                display: flex;
+                align-items: flex-start;
+            }
+            .mc-price-left {
+                flex: 1;
+            }
+            .mc-pair-name {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.25);
+                letter-spacing: 0.8px;
+                margin-bottom: 2px;
+            }
+            .mc-big-price {
+                font-family: var(--font-mono);
+                font-size: 30px;
+                font-weight: 800;
+                color: #fff;
+                letter-spacing: -1px;
+                line-height: 1;
+            }
+            .mc-big-price .mc-sub {
+                font-size: 17px;
+                opacity: 0.6;
+            }
+            .mc-delta {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                margin-top: 5px;
+                font-family: var(--font-mono);
+                font-size: 11px;
+                font-weight: 700;
+            }
+            .mc-delta.up {
+                color: var(--accent);
+            }
+            .mc-delta.dn {
+                color: var(--red);
+            }
+
+            .mc-ohlc {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 6px 16px;
+                text-align: right;
+            }
+            .mc-ohlc-lbl {
+                font-family: var(--font-mono);
+                font-size: 8px;
+                color: rgba(255, 255, 255, 0.2);
+                letter-spacing: 0.8px;
+            }
+            .mc-ohlc-val {
+                font-family: var(--font-mono);
+                font-size: 11px;
+                color: rgba(255, 255, 255, 0.55);
+                font-weight: 600;
+            }
+            .mc-ohlc-val.hi {
+                color: var(--accent);
+            }
+            .mc-ohlc-val.lo {
+                color: var(--red);
+            }
+
+            .mc-chart-area {
+                height: 128px;
+                border-top: 1px solid rgba(255, 255, 255, 0.03);
+                position: relative;
+            }
+            .mc-chart-canvas {
+                width: 100%;
+                height: 100%;
+                display: block;
+            }
+            .mc-grid-lines {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                flex-direction: column;
+                pointer-events: none;
+            }
+            .mc-grid-line {
+                flex: 1;
+                border-top: 1px dashed rgba(255, 255, 255, 0.03);
+            }
+            .mc-grid-line:first-child {
+                border-top: none;
+            }
+
+            .mc-vol {
+                border-top: 1px solid rgba(255, 255, 255, 0.03);
+                padding: 5px 14px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .mc-vol-lbl {
+                font-family: var(--font-mono);
+                font-size: 8px;
+                color: rgba(255, 255, 255, 0.2);
+                letter-spacing: 0.8px;
+            }
+            .mc-vol-bar {
+                flex: 1;
+                height: 3px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 2px;
+                overflow: hidden;
+            }
+            .mc-vol-fill {
+                height: 100%;
+                background: linear-gradient(90deg, var(--g-700), var(--accent));
+                border-radius: 2px;
+                animation: volAnim 4s ease-in-out infinite alternate;
+            }
+            @keyframes volAnim {
+                from {
+                    width: 35%;
+                }
+                to {
+                    width: 72%;
+                }
+            }
+            .mc-vol-num {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.25);
+            }
+
+            .mc-assets {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                border-top: 1px solid rgba(255, 255, 255, 0.04);
+            }
+            .mc-asset {
+                padding: 8px 10px;
+                border-right: 1px solid rgba(255, 255, 255, 0.03);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+                position: relative;
+                overflow: hidden;
+            }
+            .mc-asset:nth-child(3n) {
+                border-right: none;
+            }
+            .mc-asset-sym {
+                font-family: var(--font-mono);
+                font-size: 8px;
+                color: rgba(255, 255, 255, 0.25);
+                letter-spacing: 0.5px;
+            }
+            .mc-asset-px {
+                font-family: var(--font-mono);
+                font-size: 12px;
+                font-weight: 700;
+                color: rgba(255, 255, 255, 0.8);
+            }
+            .mc-asset-chg {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+            }
+            .mc-asset.up .mc-asset-chg {
+                color: var(--accent);
+            }
+            .mc-asset.dn .mc-asset-chg {
+                color: var(--red);
+            }
+            .mc-sparkline {
+                width: 100%;
+                height: 16px;
+                margin-top: 3px;
+            }
+            .mc-asset::after {
+                content: '';
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 2px;
+            }
+            .mc-asset.up::after {
+                background: linear-gradient(90deg, transparent, rgba(57, 255, 126, 0.35), transparent);
+            }
+            .mc-asset.dn::after {
+                background: linear-gradient(90deg, transparent, rgba(248, 113, 113, 0.35), transparent);
+            }
+
+            .mc-signals {
+                border-top: 1px solid rgba(255, 255, 255, 0.04);
+                padding: 6px 12px;
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .mc-signals-lbl {
+                font-family: var(--font-mono);
+                font-size: 8px;
+                color: rgba(255, 255, 255, 0.2);
+                letter-spacing: 0.8px;
+            }
+            .mc-signal {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                padding: 2px 7px;
+                border-radius: 4px;
+                border: 1px solid;
+            }
+            .mc-signal.bull {
+                color: var(--accent);
+                border-color: rgba(57, 255, 126, 0.25);
+                background: rgba(57, 255, 126, 0.06);
+            }
+            .mc-signal.bear {
+                color: var(--red);
+                border-color: rgba(248, 113, 113, 0.25);
+                background: rgba(248, 113, 113, 0.06);
+            }
+            .mc-signal.neut {
+                color: var(--amber);
+                border-color: rgba(251, 191, 36, 0.25);
+                background: rgba(251, 191, 36, 0.06);
+            }
+            .mc-signal-dot {
+                width: 5px;
+                height: 5px;
+                border-radius: 50%;
+                background: currentColor;
+            }
+
+            .mc-footer {
+                border-top: 1px solid rgba(255, 255, 255, 0.05);
+                background: rgba(8, 15, 26, 0.8);
+                padding: 10px 14px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .mc-footer-txt {
+                flex: 1;
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: rgba(255, 255, 255, 0.2);
+                line-height: 1.5;
+            }
+            .mc-footer-txt b {
+                color: rgba(255, 255, 255, 0.45);
+            }
+
+            .btn-open-terminal {
+                display: inline-flex;
+                align-items: center;
+                gap: 7px;
+                padding: 9px 16px;
+                background: var(--accent);
+                color: var(--void);
+                border: none;
+                border-radius: 8px;
+                font-family: var(--font-mono);
+                font-weight: 800;
+                font-size: 11px;
+                cursor: pointer;
+                letter-spacing: 0.3px;
+                text-transform: uppercase;
+                transition: all 0.18s;
+                box-shadow: 0 0 16px rgba(57, 255, 126, 0.25);
+                white-space: nowrap;
+            }
+            .btn-open-terminal:hover {
+                background: #5fffa0;
+                transform: translateY(-1px);
+                box-shadow: 0 0 28px rgba(57, 255, 126, 0.5);
+            }
+
+            .live-badge {
+                margin-left: auto;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                background: rgba(57, 255, 126, 0.07);
+                border: 1px solid rgba(57, 255, 126, 0.2);
+                color: var(--accent);
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                padding: 4px 10px;
+                border-radius: 16px;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           OFFERS LIST
+        ═══════════════════════════════════════════════════ */
+            .offers-list {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .offer-item {
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.015));
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 16px 18px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 14px;
+                transition: all 0.2s ease;
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+            }
+            .offer-item:hover {
+                border-color: rgba(255, 255, 255, 0.12);
+                background: rgba(255, 255, 255, 0.04);
+                transform: translateX(3px);
+                box-shadow: var(--shadow-soft);
+            }
+            .offer-item.selected {
+                border-color: var(--accent-border);
+                background: linear-gradient(135deg, rgba(57, 255, 126, 0.08), rgba(255, 255, 255, 0.015));
+                box-shadow: 0 0 0 3px rgba(57, 255, 126, 0.08);
+            }
+
+            .offer-kwh {
+                font-family: var(--font-mono);
+                font-weight: 800;
+                font-size: 22px;
+                color: var(--accent);
+            }
+            .offer-kwh span {
+                font-size: 12px;
+                font-weight: 500;
+                color: var(--t-muted);
+            }
+            .offer-rate {
+                font-size: 12px;
+                color: var(--t-secondary);
+                margin-top: 2px;
+            }
+            .offer-seller {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: var(--t-muted);
+                margin-top: 3px;
+            }
+
+            .btn-select {
+                background: linear-gradient(135deg, var(--g-700), var(--g-600));
+                color: white;
+                border: 1px solid rgba(57, 255, 126, 0.22);
+                padding: 10px 16px;
+                border-radius: 10px;
+                font-family: var(--font-mono);
+                font-weight: 700;
+                font-size: 11px;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                white-space: nowrap;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                box-shadow: 0 10px 20px rgba(22, 163, 74, 0.2);
+            }
+            .btn-select:hover:not(:disabled) {
+                background: linear-gradient(135deg, var(--g-600), var(--g-500));
+                transform: translateY(-1px) scale(1.02);
+                box-shadow: 0 12px 28px rgba(22, 163, 74, 0.28);
+            }
+            .btn-select:disabled {
+                background: rgba(57, 255, 126, 0.08);
+                color: var(--accent);
+                cursor: default;
+                border-color: rgba(57, 255, 126, 0.12);
+                box-shadow: none;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           POST OFFER FORM
+        ═══════════════════════════════════════════════════ */
+            .offer-terminal {
+                background: #050b14;
+                border: 1px solid rgba(57, 255, 126, 0.12);
+                border-radius: 14px;
+                overflow: hidden;
+            }
+
+            .oc-type-row {
+                padding: 10px 14px 0;
+                display: flex;
+                gap: 5px;
+            }
+            .oc-type-btn {
+                flex: 1;
+                padding: 8px 4px;
+                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                background: transparent;
+                color: rgba(255, 255, 255, 0.25);
+                font-family: var(--font-mono);
+                font-size: 10px;
+                font-weight: 700;
+                cursor: pointer;
+                text-align: center;
+                transition: all 0.15s;
+                letter-spacing: 0.3px;
+            }
+            .oc-type-btn.active {
+                background: rgba(57, 255, 126, 0.1);
+                border-color: rgba(57, 255, 126, 0.35);
+                color: var(--accent);
+            }
+
+            .oc-inputs {
+                padding: 10px 14px;
+            }
+
+            .oc-group {
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 10px;
+                padding: 10px 14px;
+                margin-bottom: 8px;
+                overflow: hidden;
+                transition:
+                    border-color 0.2s,
+                    background 0.2s;
+            }
+            .oc-group:focus-within {
+                border-color: rgba(57, 255, 126, 0.3);
+                background: rgba(57, 255, 126, 0.02);
+            }
+
+            .oc-group-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 5px;
+            }
+            .oc-lbl {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.25);
+                letter-spacing: 0.8px;
+                text-transform: uppercase;
+            }
+            .oc-hint {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.15);
+            }
+
+            .oc-row {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .oc-row input {
+                flex: 1;
+                min-width: 0;
+                width: 0;
+                background: transparent;
+                border: none;
+                outline: none;
+                font-size: 26px;
+                font-family: var(--font-mono);
+                font-weight: 800;
+                color: #fff;
+            }
+            .oc-row input::placeholder {
+                color: rgba(255, 255, 255, 0.08);
+            }
+
+            .oc-unit {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+                padding: 4px 10px;
+                font-family: var(--font-mono);
+                font-size: 11px;
+                font-weight: 700;
+                color: rgba(255, 255, 255, 0.4);
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .oc-unit.kwh {
+                color: var(--accent);
+                border-color: rgba(57, 255, 126, 0.2);
+                background: rgba(57, 255, 126, 0.06);
+            }
+            .oc-unit.hbar {
+                color: var(--blue);
+                border-color: rgba(96, 165, 250, 0.2);
+                background: rgba(96, 165, 250, 0.06);
+            }
+
+            .oc-estimate {
+                margin: 0 14px 10px;
+                background: rgba(57, 255, 126, 0.03);
+                border: 1px solid rgba(57, 255, 126, 0.08);
+                border-radius: 9px;
+                padding: 9px 12px;
+            }
+            .oc-est-lbl {
+                font-family: var(--font-mono);
+                font-size: 8px;
+                color: rgba(255, 255, 255, 0.2);
+                letter-spacing: 0.8px;
+                margin-bottom: 6px;
+                text-transform: uppercase;
+            }
+            .oc-est-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 2px 0;
+            }
+            .oc-est-key {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: rgba(255, 255, 255, 0.25);
+            }
+            .oc-est-val {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                font-weight: 600;
+                color: rgba(255, 255, 255, 0.5);
+            }
+            .oc-est-val.green {
+                color: var(--accent);
+            }
+
+            .oc-submit-wrap {
+                padding: 0 14px 10px;
+            }
+            .oc-submit {
+                width: 100%;
+                padding: 13px;
+                background: linear-gradient(135deg, #15803d, var(--accent));
+                color: var(--void);
+                border: none;
+                border-radius: 10px;
+                font-family: var(--font-mono);
+                font-weight: 800;
+                font-size: 12px;
+                cursor: pointer;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+                transition: all 0.2s;
+                position: relative;
+                overflow: hidden;
+            }
+            .oc-submit::before {
+                content: '';
+                position: absolute;
+                inset: 0;
+                background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent);
+            }
+            .oc-submit:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 6px 24px rgba(57, 255, 126, 0.35);
+            }
+
+            .oc-chain {
+                border-top: 1px solid rgba(255, 255, 255, 0.04);
+                padding: 7px 14px;
+                display: flex;
+                gap: 12px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+            .oc-chain-item {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: rgba(255, 255, 255, 0.18);
+            }
+
+            /* ═══════════════════════════════════════════════════
+           MY OFFERS
+        ═══════════════════════════════════════════════════ */
+            .my-offer {
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.014));
+                border: 1.5px solid var(--border);
+                border-radius: 14px;
+                padding: 15px 18px;
+                margin-bottom: 10px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 14px;
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+            }
+            .my-offer.available {
+                border-left: 3px solid var(--accent);
+            }
+            .my-offer.completed {
+                border-left: 3px solid rgba(255, 255, 255, 0.1);
+                opacity: 0.65;
+            }
+
+            .my-offer-kwh {
+                font-family: var(--font-mono);
+                font-weight: 800;
+                font-size: 20px;
+                color: var(--accent);
+            }
+            .my-offer-kwh.completed {
+                color: var(--t-muted);
+            }
+            .my-offer-meta {
+                font-size: 12px;
+                color: var(--t-secondary);
+                margin-top: 2px;
+            }
+            .my-offer-date {
+                font-family: var(--font-mono);
+                font-size: 10px;
+                color: var(--t-muted);
+                margin-top: 3px;
+            }
+
+            .status-pill {
+                padding: 4px 12px;
+                border-radius: 16px;
+                font-family: var(--font-mono);
+                font-size: 10px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                white-space: nowrap;
+            }
+            .status-pill.available {
+                background: rgba(57, 255, 126, 0.1);
+                color: var(--accent);
+                border: 1px solid rgba(57, 255, 126, 0.2);
+            }
+            .status-pill.completed {
+                background: rgba(255, 255, 255, 0.05);
+                color: rgba(255, 255, 255, 0.3);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+            }
+
+            /* ═══════════════════════════════════════════════════
+           RECENT TRADES
+        ═══════════════════════════════════════════════════ */
+            .trade-item {
+                background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.015));
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 12px 16px;
+                margin-bottom: 8px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+            }
+            .trade-badge {
+                background: rgba(57, 255, 126, 0.08);
+                color: var(--accent);
+                border: 1px solid rgba(57, 255, 126, 0.18);
+                padding: 4px 10px;
+                border-radius: 16px;
+                font-family: var(--font-mono);
+                font-size: 10px;
+                font-weight: 700;
+                white-space: nowrap;
+            }
+            .trade-detail {
+                flex: 1;
+                font-size: 13px;
+                color: var(--t-secondary);
+            }
+            .trade-detail strong {
+                color: var(--t-primary);
+            }
+            .trade-link {
+                font-family: var(--font-mono);
+                font-size: 11px;
+                color: var(--accent);
+                text-decoration: none;
+                white-space: nowrap;
+                transition: color 0.2s;
+            }
+            .trade-link:hover {
+                color: #5fffa0;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           STATUS BOXES
+        ═══════════════════════════════════════════════════ */
+            .status-box {
+                padding: 12px 18px;
+                border-radius: 10px;
+                font-weight: 600;
+                font-size: 13px;
+                text-align: center;
+                display: none;
+                margin-top: 14px;
+                box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+            }
+            .status-box.show {
+                display: block;
+            }
+            .status-box.success {
+                background: rgba(127, 240, 164, 0.07);
+                color: var(--g-300);
+                border: 1px solid rgba(127, 240, 164, 0.2);
+            }
+            .status-box.error {
+                background: rgba(255, 107, 107, 0.07);
+                color: var(--red);
+                border: 1px solid rgba(255, 107, 107, 0.22);
+            }
+            .status-box a {
+                color: inherit;
+                text-decoration: underline;
+                text-underline-offset: 2px;
+            }
+            .status-box a:hover {
+                opacity: 0.9;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           EMPTY STATES
+        ═══════════════════════════════════════════════════ */
+            .empty-state {
+                text-align: center;
+                padding: 32px 24px;
+                color: var(--t-muted);
+            }
+            .empty-state p {
+                font-size: 14px;
+                line-height: 1.6;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           NEWS SIDEBAR
+        ═══════════════════════════════════════════════════ */
+            .news-sidebar {
+                padding: 24px 24px 24px 8px;
+                position: sticky;
+                top: 64px;
+                max-height: calc(100vh - 64px);
+                overflow-y: auto;
+                overflow-x: hidden;
+                align-self: start;
+                scrollbar-width: thin;
+                scrollbar-color: var(--surface-3) transparent;
+            }
+            .news-sidebar::-webkit-scrollbar {
+                width: 3px;
+            }
+
+            .news-card-wrap {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 18px;
+                box-shadow: var(--shadow-card);
+                overflow: hidden;
+            }
+
+            .news-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 18px 18px 14px;
+                border-bottom: 1px solid var(--border);
+            }
+            .news-title {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-family: var(--font-display);
+                font-weight: 600;
+                font-size: 14px;
+            }
+            .news-refresh {
+                width: 30px;
+                height: 30px;
+                background: var(--surface-2);
+                border: 1px solid var(--border);
+                color: var(--accent);
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 15px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.3s;
+            }
+            .news-refresh:hover {
+                background: var(--surface-3);
+                transform: rotate(180deg);
+            }
+            .news-refresh.spinning {
+                animation: spin 0.8s linear infinite;
+            }
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            .news-tabs {
+                display: flex;
+                gap: 4px;
+                padding: 10px 12px;
+                background: var(--surface-2);
+                border-bottom: 1px solid var(--border);
+                flex-wrap: wrap;
+            }
+            .news-tab {
+                flex: 1;
+                padding: 7px 4px;
+                border: 1px solid var(--border);
+                background: transparent;
+                border-radius: 8px;
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                cursor: pointer;
+                color: var(--t-secondary);
+                transition: all 0.18s;
+                text-align: center;
+                letter-spacing: 0.2px;
+                white-space: nowrap;
+            }
+            .news-tab.active {
+                background: var(--g-700);
+                color: white;
+                border-color: var(--g-700);
+            }
+            .news-tab:not(.active):hover {
+                border-color: var(--accent-border);
+                color: var(--accent);
+                background: var(--accent-dim);
+            }
+
+            .news-feed {
+                display: flex;
+                flex-direction: column;
+            }
+
+            .news-loading {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 12px;
+                padding: 40px 20px;
+                color: var(--t-muted);
+                font-size: 13px;
+            }
+            .news-spinner {
+                width: 26px;
+                height: 26px;
+                border: 3px solid var(--surface-3);
+                border-top-color: var(--accent);
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+            }
+
+            .news-item {
+                display: block;
+                padding: 14px 18px;
+                border-bottom: 1px solid var(--border);
+                cursor: pointer;
+                transition: background 0.15s;
+                text-decoration: none;
+                color: inherit;
+            }
+            .news-item:last-child {
+                border-bottom: none;
+            }
+            .news-item:hover {
+                background: var(--surface-2);
+            }
+
+            .news-cat {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.8px;
+                color: var(--accent);
+                margin-bottom: 5px;
+            }
+            .news-headline {
+                font-family: var(--font-display);
+                font-weight: 600;
+                font-size: 13px;
+                color: var(--t-primary);
+                line-height: 1.45;
+                margin-bottom: 6px;
+                letter-spacing: -0.2px;
+            }
+            .news-summary {
+                font-size: 12px;
+                color: var(--t-secondary);
+                line-height: 1.55;
+                margin-bottom: 8px;
+                display: -webkit-box;
+                -webkit-line-clamp: 3;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+            .news-foot {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .news-tag {
+                background: rgba(57, 255, 126, 0.08);
+                color: var(--accent);
+                border: 1px solid rgba(57, 255, 126, 0.2);
+                padding: 3px 8px;
+                border-radius: 8px;
+                font-family: var(--font-mono);
+                font-weight: 700;
+                font-size: 9px;
+                white-space: nowrap;
+            }
+            .news-meta {
+                font-family: var(--font-mono);
+                font-size: 9px;
+                color: var(--t-muted);
+                text-align: right;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           FLOATING TRADINGVIEW TERMINAL
+        ═══════════════════════════════════════════════════ */
+            #tv-panel {
+                position: fixed;
+                top: 80px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 820px;
+                height: 560px;
+                min-width: 360px;
+                min-height: 300px;
+                background: #131722;
+                border-radius: 14px;
+                border: 1px solid rgba(57, 255, 126, 0.3);
+                box-shadow:
+                    0 32px 80px rgba(0, 0, 0, 0.7),
+                    0 0 60px rgba(57, 255, 126, 0.06);
+                z-index: 9500;
+                display: none;
+                flex-direction: column;
+                overflow: visible;
+            }
+            #tv-panel.visible {
+                display: flex;
+            }
+
+            .tv-rz {
+                position: absolute;
+                z-index: 10;
+                background: transparent;
+            }
+            .tv-rz.n {
+                top: -5px;
+                left: 16px;
+                right: 16px;
+                height: 10px;
+                cursor: n-resize;
+            }
+            .tv-rz.s {
+                bottom: -5px;
+                left: 16px;
+                right: 16px;
+                height: 10px;
+                cursor: s-resize;
+            }
+            .tv-rz.e {
+                right: -5px;
+                top: 16px;
+                bottom: 16px;
+                width: 10px;
+                cursor: e-resize;
+            }
+            .tv-rz.w {
+                left: -5px;
+                top: 16px;
+                bottom: 16px;
+                width: 10px;
+                cursor: w-resize;
+            }
+            .tv-rz.nw {
+                top: -5px;
+                left: -5px;
+                width: 20px;
+                height: 20px;
+                cursor: nw-resize;
+            }
+            .tv-rz.ne {
+                top: -5px;
+                right: -5px;
+                width: 20px;
+                height: 20px;
+                cursor: ne-resize;
+            }
+            .tv-rz.sw {
+                bottom: -5px;
+                left: -5px;
+                width: 20px;
+                height: 20px;
+                cursor: sw-resize;
+            }
+            .tv-rz.se {
+                bottom: -5px;
+                right: -5px;
+                width: 20px;
+                height: 20px;
+                cursor: se-resize;
+            }
+            .tv-rz.se::after {
+                content: '';
+                position: absolute;
+                bottom: 6px;
+                right: 6px;
+                width: 8px;
+                height: 8px;
+                border-right: 2px solid rgba(57, 255, 126, 0.5);
+                border-bottom: 2px solid rgba(57, 255, 126, 0.5);
+            }
+
+            .tv-header {
+                background: #1a1f2e;
+                padding: 10px 14px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                cursor: grab;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+                user-select: none;
+                flex-shrink: 0;
+                border-radius: 13px 13px 0 0;
+            }
+            .tv-header:active {
+                cursor: grabbing;
+            }
+
+            .tv-title {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-family: var(--font-mono);
+                font-weight: 700;
+                font-size: 12px;
+                color: #fff;
+            }
+            .tv-title-dot {
+                width: 7px;
+                height: 7px;
+                background: var(--accent);
+                border-radius: 50%;
+                box-shadow: 0 0 8px var(--accent);
+                animation: livePulse 2s infinite;
+            }
+            .tv-hint {
+                font-size: 10px;
+                color: rgba(255, 255, 255, 0.2);
+                font-weight: 400;
+            }
+
+            .tv-controls {
+                display: flex;
+                gap: 6px;
+            }
+            .tv-ctrl {
+                width: 26px;
+                height: 26px;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 12px;
+                font-weight: 700;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.15s;
+            }
+            .tv-ctrl.min {
+                background: rgba(251, 191, 36, 0.12);
+                color: var(--amber);
+            }
+            .tv-ctrl.max {
+                background: rgba(57, 255, 126, 0.1);
+                color: var(--accent);
+            }
+            .tv-ctrl.cls {
+                width: 42px;
+                font-size: 10px;
+                background: rgba(248, 113, 113, 0.12);
+                color: var(--red);
+            }
+            .tv-ctrl:hover {
+                filter: brightness(1.4);
+                transform: scale(1.1);
+            }
+
+            .tv-body {
+                flex: 1;
+                overflow: hidden;
+                border-radius: 0 0 13px 13px;
+                background: #131722;
+            }
+            .tv-body .tradingview-widget-container,
+            .tv-body .tradingview-widget-container__widget {
+                width: 100% !important;
+                height: 100% !important;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           UTILITIES
+        ═══════════════════════════════════════════════════ */
+            .hidden {
+                display: none !important;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           RESPONSIVE
+        ═══════════════════════════════════════════════════ */
+            @media (max-width: 1200px) {
+                .page-layout {
+                    grid-template-columns: 1fr;
+                }
+                .news-sidebar {
+                    display: none;
+                }
+            }
+            @media (max-width: 768px) {
+                .two-col {
+                    grid-template-columns: 1fr;
+                }
+                .stats-bar {
+                    gap: 0;
+                }
+                .role-cards {
+                    grid-template-columns: 1fr;
+                }
+                .header {
+                    padding: 0 16px;
+                }
+                .main-content {
+                    padding: 16px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <!-- Background effects -->
+        <div class="bg-grid"></div>
+        <div class="bg-glow-1"></div>
+        <div class="bg-glow-2"></div>
+
+        <!-- ════════════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════════ -->
+        <header class="header">
+            <a href="#" class="logo">
+                <div class="logo-mark">ES</div>
+                <span class="logo-name">Energy<span>Swap</span></span>
+            </a>
+
+            <div class="header-center">
+                <div class="hbar-pill">
+                    <span class="live-dot"></span>
+                    <span class="hbar-label">HBAR</span>
+                    <span class="hbar-value" id="hbar-price">$—</span>
+                    <span class="hbar-change">LIVE</span>
+                </div>
+                <div class="network-badge">
+                    <span class="live-dot"></span>
+                    Hedera Testnet
+                </div>
+            </div>
+
+            <div class="header-right">
+                <div id="account-info" class="wallet-chip hidden">
+                    <span id="role-badge" class="role-chip">—</span>
+                    <div class="wallet-id-block">
+                        <div class="wallet-role" id="wallet-role-label">Wallet ID</div>
+                        <div class="wallet-addr" id="account-id">—</div>
+                    </div>
+                    <button id="disconnect-btn" class="btn-disconnect">Disconnect</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- ════════════════════════════════════════════════════
+     STATS BAR
+════════════════════════════════════════════════════ -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="stat-icon">OFF</span>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-offers">0</div>
+                    <div class="stat-label">Active Offers</div>
+                </div>
+            </div>
+            <div class="stat-item">
+                <span class="stat-icon">TRD</span>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-trades">0</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+            </div>
+            <div class="stat-item">
+                <span class="stat-icon">kWh</span>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-kwh">0</div>
+                    <div class="stat-label">kWh Traded</div>
+                </div>
+            </div>
+            <div class="stat-item">
+                <span class="stat-icon">ℏ</span>
+                <div class="stat-info">
+                    <div class="stat-value" id="stat-hbar">0</div>
+                    <div class="stat-label">HBAR Volume</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+     ROLE SELECTION SCREEN
+════════════════════════════════════════════════════ -->
+        <div id="role-selection-screen" class="role-screen">
+            <!-- Candlestick BG canvas -->
+            <canvas id="role-bg-canvas"></canvas>
+
+            <!-- Grid + orbs -->
+            <div class="role-screen-grid"></div>
+            <div class="role-orb-1"></div>
+            <div class="role-orb-2"></div>
+            <div class="role-scan"></div>
+
+            <!-- Ticker tape -->
+            <div class="role-ticker">
+                <div class="role-ticker-track" id="ticker-track"></div>
+            </div>
+
+            <!-- Landscape SVG -->
+            <svg
+                class="role-landscape"
+                viewBox="0 0 1440 260"
+                xmlns="http://www.w3.org/2000/svg"
+                preserveAspectRatio="xMidYMax meet"
+            >
+                <rect x="0" y="220" width="1440" height="40" fill="var(--accent)" />
+                <!-- Windmill 1 -->
+                <rect x="150" y="60" width="7" height="190" rx="3.5" fill="var(--accent)" />
+                <circle cx="153.5" cy="60" r="6" fill="var(--accent)" />
+                <ellipse cx="153.5" cy="22" rx="9" ry="42" fill="var(--accent)" />
+                <ellipse cx="153.5" cy="22" rx="9" ry="42" fill="var(--accent)" transform="rotate(120 153.5 60)" />
+                <ellipse cx="153.5" cy="22" rx="9" ry="42" fill="var(--accent)" transform="rotate(240 153.5 60)" />
+                <!-- Windmill 2 (larger) -->
+                <rect x="320" y="28" width="9" height="222" rx="4.5" fill="var(--accent)" />
+                <circle cx="324.5" cy="28" r="8" fill="var(--accent)" />
+                <ellipse cx="324.5" cy="-22" rx="12" ry="54" fill="var(--accent)" />
+                <ellipse cx="324.5" cy="-22" rx="12" ry="54" fill="var(--accent)" transform="rotate(120 324.5 28)" />
+                <ellipse cx="324.5" cy="-22" rx="12" ry="54" fill="var(--accent)" transform="rotate(240 324.5 28)" />
+                <!-- Windmill 3 (small) -->
+                <rect x="480" y="92" width="6" height="158" rx="3" fill="var(--accent)" />
+                <circle cx="483" cy="92" r="5" fill="var(--accent)" />
+                <ellipse cx="483" cy="60" rx="7" ry="36" fill="var(--accent)" />
+                <ellipse cx="483" cy="60" rx="7" ry="36" fill="var(--accent)" transform="rotate(120 483 92)" />
+                <ellipse cx="483" cy="60" rx="7" ry="36" fill="var(--accent)" transform="rotate(240 483 92)" />
+                <!-- Solar panels -->
+                <rect x="820" y="168" width="72" height="46" rx="4" fill="var(--accent)" />
+                <line x1="856" y1="168" x2="856" y2="214" stroke="var(--void)" stroke-width="1.5" />
+                <line x1="820" y1="191" x2="892" y2="191" stroke="var(--void)" stroke-width="1.5" />
+                <rect x="908" y="174" width="72" height="46" rx="4" fill="var(--accent)" />
+                <line x1="944" y1="174" x2="944" y2="220" stroke="var(--void)" stroke-width="1.5" />
+                <line x1="908" y1="197" x2="980" y2="197" stroke="var(--void)" stroke-width="1.5" />
+                <rect x="996" y="160" width="72" height="46" rx="4" fill="var(--accent)" />
+                <line x1="1032" y1="160" x2="1032" y2="206" stroke="var(--void)" stroke-width="1.5" />
+                <line x1="996" y1="183" x2="1068" y2="183" stroke="var(--void)" stroke-width="1.5" />
+                <rect x="1084" y="166" width="72" height="46" rx="4" fill="var(--accent)" />
+                <line x1="1120" y1="166" x2="1120" y2="212" stroke="var(--void)" stroke-width="1.5" />
+                <line x1="1084" y1="189" x2="1156" y2="189" stroke="var(--void)" stroke-width="1.5" />
+                <rect x="1172" y="172" width="72" height="46" rx="4" fill="var(--accent)" />
+                <line x1="1208" y1="172" x2="1208" y2="218" stroke="var(--void)" stroke-width="1.5" />
+                <line x1="1172" y1="195" x2="1244" y2="195" stroke="var(--void)" stroke-width="1.5" />
+                <!-- Far right windmill -->
+                <rect x="1306" y="68" width="7" height="182" rx="3.5" fill="var(--accent)" />
+                <circle cx="1309.5" cy="68" r="6" fill="var(--accent)" />
+                <ellipse cx="1309.5" cy="33" rx="9" ry="38" fill="var(--accent)" />
+                <ellipse cx="1309.5" cy="33" rx="9" ry="38" fill="var(--accent)" transform="rotate(120 1309.5 68)" />
+                <ellipse cx="1309.5" cy="33" rx="9" ry="38" fill="var(--accent)" transform="rotate(240 1309.5 68)" />
+            </svg>
+
+            <!-- Main content -->
+            <div class="role-content">
+                <div class="role-eyebrow">
+                    <span class="live-dot"></span>
+                    Live on Hedera Hashgraph
+                </div>
+
+                <h1 class="role-hero-title">
+                    <span class="line-1">Decentralised</span>
+                    <span class="line-2">Energy Markets</span>
+                </h1>
+
+                <p class="role-hero-sub">
+                    Buy and sell renewable energy directly, peer-to-peer. Secured by Hedera, with zero intermediaries
+                    and instant settlement.
+                </p>
+
+                <div class="role-cards">
+                    <!-- Prosumer card -->
+                    <div class="role-card prosumer-card">
+                        <div class="role-card-top">
+                            <span class="role-card-badge">Producer</span>
+                        </div>
+                        <div class="role-card-title">Prosumer</div>
+                        <div class="role-card-desc">
+                            You generate renewable energy (solar, wind, hydro) and want to sell your surplus kWh for
+                            HBAR tokens.
+                        </div>
+                        <button id="btn-connect-prosumer" class="btn-role prosumer">Connect as Prosumer</button>
+                    </div>
+
+                    <!-- Consumer card -->
+                    <div class="role-card consumer-card">
+                        <div class="role-card-top">
+                            <span class="role-card-badge">Buyer</span>
+                        </div>
+                        <div class="role-card-title">Consumer</div>
+                        <div class="role-card-desc">
+                            You want to purchase verified renewable energy credits directly from producers using HBAR on
+                            Hedera.
+                        </div>
+                        <button id="btn-connect-consumer" class="btn-role consumer">Connect as Consumer</button>
+                    </div>
+                </div>
+
+                <p class="role-footnote">
+                    Your wallet address is your identity, self-sovereign and verifiable on HashScan.
+                </p>
+            </div>
+
+            <div id="role-status" class="status-box"></div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+     DASHBOARD
+════════════════════════════════════════════════════ -->
+        <div id="dashboard-screen" class="dashboard hidden">
+            <div class="page-layout">
+                <!-- Main content -->
+                <main class="main-content">
+                    <!-- ─── CONSUMER VIEW ─── -->
+                    <div id="consumer-view">
+                        <!-- Web3 Identity Bar — Wallet Address as UserID -->
+                        <div class="identity-bar" id="consumer-identity-bar">
+                            <div class="identity-left">
+                                <div class="identity-avatar">C</div>
+                                <div class="identity-info">
+                                    <div class="identity-role-label">Consumer Wallet ID</div>
+                                    <div class="identity-address" id="consumer-wallet-display">—</div>
+                                    <div class="identity-address-sub">
+                                        Hedera Testnet, HTS enabled, self-sovereign identity
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="identity-right">
+                                <div class="identity-status-dot"><span class="live-dot"></span> Connected</div>
+                                <a href="#" id="consumer-hashscan-link" class="identity-hashscan-link" target="_blank"
+                                    >View on HashScan</a
+                                >
+                            </div>
+                        </div>
+
+                        <div class="two-col">
+                            <!-- Execute Trade -->
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="card-title">
+                                        <div class="card-icon">PAY</div>
+                                        Execute Trade
+                                    </div>
+                                </div>
+
+                                <div class="terminal-wrap">
+                                    <div class="terminal-topbar">
+                                        <div class="terminal-dots">
+                                            <div class="terminal-dot red"></div>
+                                            <div class="terminal-dot amber"></div>
+                                            <div class="terminal-dot green"></div>
+                                        </div>
+                                        <span class="terminal-label">ENERGY-SWAP-TERMINAL</span>
+                                        <div class="terminal-net"><span class="live-dot"></span> HEDERA / HCS-20</div>
+                                    </div>
+
+                                    <div class="tc-rates">
+                                        <div class="tc-rate">
+                                            <div class="tc-rate-lbl">HBAR / USD</div>
+                                            <div class="tc-rate-val" id="hbar-usd-market-rate">$—</div>
+                                        </div>
+                                        <div class="tc-rate">
+                                            <div class="tc-rate-lbl">AVG RATE</div>
+                                            <div class="tc-rate-val">~0.24 ℏ/kWh</div>
+                                        </div>
+                                        <div class="tc-rate">
+                                            <div class="tc-rate-lbl">TX FEE</div>
+                                            <div class="tc-rate-val neutral">~$0.001</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="tc-inputs">
+                                        <div class="tc-input-panel">
+                                            <div class="tc-input-top">
+                                                <span class="tc-input-lbl">You Pay (estimated)</span>
+                                                <span class="tc-input-bal">Balance: <span>—</span></span>
+                                            </div>
+                                            <div class="tc-input-row">
+                                                <input type="number" id="hbar-input" placeholder="0.00" readonly />
+                                                <div class="tc-token">
+                                                    <div class="tc-token-icon hbar">ℏ</div>
+                                                    <span class="tc-token-name">HBAR</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="tc-arrow">
+                                            <div class="tc-arrow-btn">↓</div>
+                                        </div>
+
+                                        <div class="tc-input-panel">
+                                            <div class="tc-input-top">
+                                                <span class="tc-input-lbl">You Receive</span>
+                                                <span class="tc-input-bal">Renewable Energy Credit</span>
+                                            </div>
+                                            <div class="tc-input-row">
+                                                <input
+                                                    type="number"
+                                                    id="kwh-receive-input"
+                                                    placeholder="0.00"
+                                                    min="0"
+                                                    step="0.01"
+                                                />
+                                                <div class="tc-token">
+                                                    <div class="tc-token-icon kwh">kWh</div>
+                                                    <span class="tc-token-name">kWh</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="tc-info">
+                                        <div class="tc-info-row">
+                                            <span class="tc-info-lbl">SELECTED OFFER</span>
+                                            <span class="tc-info-val" id="tc-offer-id">None selected</span>
+                                        </div>
+                                        <div class="tc-info-divider"></div>
+                                        <div class="tc-info-row">
+                                            <span class="tc-info-lbl">RATE</span>
+                                            <span class="tc-info-val" id="tc-rate">— HBAR / kWh</span>
+                                        </div>
+                                        <div class="tc-info-row">
+                                            <span class="tc-info-lbl">PROSUMER ID</span>
+                                            <span class="tc-info-val" id="tc-prosumer">—</span>
+                                        </div>
+                                        <div class="tc-info-row">
+                                            <span class="tc-info-lbl">AVAILABLE</span>
+                                            <span class="tc-info-val hi" id="tc-available">— kWh</span>
+                                        </div>
+                                        <div class="tc-info-divider"></div>
+                                        <div class="tc-info-row">
+                                            <span class="tc-info-lbl">ESTIMATED TOTAL</span>
+                                            <span class="tc-info-val hi" id="tc-total"
+                                                >— HBAR, including estimated network fee</span
+                                            >
+                                        </div>
+                                    </div>
+                                    <div id="trade-info" style="display: none"></div>
+
+                                    <div class="tc-exec">
+                                        <button id="confirm-trade-btn" disabled>Select an Offer to Begin</button>
+                                    </div>
+
+                                    <div class="tc-security">
+                                        <div class="tc-sec-item">HTS secured</div>
+                                        <div class="tc-sec-item">Atomic settlement</div>
+                                        <div class="tc-sec-item">Immutable record</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Market Chart -->
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="card-title">Market Chart</div>
+                                    <span class="live-badge"><span class="live-dot"></span> LIVE</span>
+                                </div>
+                                <div class="mc-terminal">
+                                    <div class="mc-sym-bar">
+                                        <span class="mc-sym active">HBAR/USD</span>
+                                        <span class="mc-sym">BTC/USD</span>
+                                        <span class="mc-sym">ETH/USD</span>
+                                        <span class="mc-sym">XAU/USD</span>
+                                        <span class="mc-sym">SOL/USD</span>
+                                        <span class="mc-sym-gap"></span>
+                                        <div class="mc-tf-group">
+                                            <span class="mc-tf">1m</span><span class="mc-tf">5m</span
+                                            ><span class="mc-tf">15m</span> <span class="mc-tf active">1H</span
+                                            ><span class="mc-tf">4H</span><span class="mc-tf">1D</span>
+                                        </div>
+                                    </div>
+                                    <div class="mc-price-area">
+                                        <div class="mc-price-left">
+                                            <div class="mc-pair-name">HBAR / USD, Hedera Hashgraph</div>
+                                            <div class="mc-big-price">$—</div>
+                                            <div class="mc-delta">Waiting for live quote</div>
+                                        </div>
+                                        <div class="mc-ohlc">
+                                            <div>
+                                                <div class="mc-ohlc-lbl">OPEN</div>
+                                                <div class="mc-ohlc-val">—</div>
+                                            </div>
+                                            <div>
+                                                <div class="mc-ohlc-lbl">HIGH</div>
+                                                <div class="mc-ohlc-val hi">—</div>
+                                            </div>
+                                            <div>
+                                                <div class="mc-ohlc-lbl">LOW</div>
+                                                <div class="mc-ohlc-val lo">—</div>
+                                            </div>
+                                            <div>
+                                                <div class="mc-ohlc-lbl">CLOSE</div>
+                                                <div class="mc-ohlc-val">—</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mc-chart-area">
+                                        <div class="mc-grid-lines">
+                                            <div class="mc-grid-line"></div>
+                                            <div class="mc-grid-line"></div>
+                                            <div class="mc-grid-line"></div>
+                                            <div class="mc-grid-line"></div>
+                                        </div>
+                                        <canvas class="mc-chart-canvas" id="mc-canvas-consumer"></canvas>
+                                    </div>
+                                    <div class="mc-vol">
+                                        <span class="mc-vol-lbl">VOL 24H</span>
+                                        <div class="mc-vol-bar"><div class="mc-vol-fill"></div></div>
+                                        <span class="mc-vol-num">842.3M HBAR</span>
+                                    </div>
+                                    <div class="mc-assets">
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">BTC/USD</div>
+                                            <div class="mc-asset-px">$83,412</div>
+                                            <div class="mc-asset-chg">+1.38%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,14 10,11 20,12 30,6 40,8 50,3 60,1"
+                                                    fill="none"
+                                                    stroke="var(--accent)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset dn">
+                                            <div class="mc-asset-sym">ETH/USD</div>
+                                            <div class="mc-asset-px">$2,184</div>
+                                            <div class="mc-asset-chg">-0.72%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,2 10,4 20,3 30,7 40,10 50,12 60,14"
+                                                    fill="none"
+                                                    stroke="var(--red)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">XAU/USD</div>
+                                            <div class="mc-asset-px">$3,104</div>
+                                            <div class="mc-asset-chg">+0.91%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,13 10,11 20,12 30,9 40,7 50,5 60,3"
+                                                    fill="none"
+                                                    stroke="var(--amber)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">SOL/USD</div>
+                                            <div class="mc-asset-px">$134.22</div>
+                                            <div class="mc-asset-chg">+3.05%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,14 10,12 20,10 30,8 40,5 50,3 60,1"
+                                                    fill="none"
+                                                    stroke="var(--accent)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset dn">
+                                            <div class="mc-asset-sym">EUR/USD</div>
+                                            <div class="mc-asset-px">1.0821</div>
+                                            <div class="mc-asset-chg">-0.18%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,3 10,5 20,6 30,8 40,10 50,12 60,14"
+                                                    fill="none"
+                                                    stroke="var(--red)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">GBP/USD</div>
+                                            <div class="mc-asset-px">1.2938</div>
+                                            <div class="mc-asset-chg">+0.34%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,12 10,10 20,11 30,8 40,7 50,5 60,4"
+                                                    fill="none"
+                                                    stroke="var(--blue)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                    </div>
+                                    <div class="mc-signals">
+                                        <span class="mc-signals-lbl">SIGNALS</span>
+                                        <span class="mc-signal bull"><span class="mc-signal-dot"></span>RSI 58.4</span>
+                                        <span class="mc-signal bull"><span class="mc-signal-dot"></span>MACD ↑</span>
+                                        <span class="mc-signal neut"><span class="mc-signal-dot"></span>BB Mid</span>
+                                        <span class="mc-signal bull"><span class="mc-signal-dot"></span>EMA20</span>
+                                    </div>
+                                    <div class="mc-footer">
+                                        <div class="mc-footer-txt">
+                                            <b>Full TradingView Terminal</b><br />Live charts, 100+ symbols, drag and
+                                            resize
+                                        </div>
+                                        <button class="btn-open-terminal" onclick="openTVPanel()">Open Terminal</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Available Offers -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">
+                                    Available Energy Offers
+                                </div>
+                                <span class="live-badge"><span class="live-dot"></span> Newest first</span>
+                            </div>
+                            <div class="offers-list">
+                                <ul id="offer-list" style="list-style: none; padding: 0">
+                                    <li>
+                                        <div class="empty-state"><p>Loading offers...</p></div>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ─── PROSUMER VIEW ─── -->
+                    <div id="prosumer-view" class="hidden">
+                        <!-- Web3 Identity Bar — Wallet Address as UserID -->
+                        <div class="identity-bar" id="prosumer-identity-bar">
+                            <div class="identity-left">
+                                <div class="identity-avatar">P</div>
+                                <div class="identity-info">
+                                    <div class="identity-role-label">Prosumer Wallet ID</div>
+                                    <div class="identity-address" id="prosumer-wallet-display">—</div>
+                                    <div class="identity-address-sub">
+                                        Hedera Testnet, HTS enabled, self-sovereign identity
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="identity-right">
+                                <div class="identity-status-dot"><span class="live-dot"></span> Connected</div>
+                                <a href="#" id="prosumer-hashscan-link" class="identity-hashscan-link" target="_blank"
+                                    >View on HashScan</a
+                                >
+                            </div>
+                        </div>
+
+                        <div class="two-col">
+                            <!-- Post Offer -->
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="card-title">Post Energy Offer</div>
+                                </div>
+
+                                <div class="offer-terminal">
+                                    <div class="terminal-topbar">
+                                        <div class="terminal-dots">
+                                            <div class="terminal-dot red"></div>
+                                            <div class="terminal-dot amber"></div>
+                                            <div class="terminal-dot green"></div>
+                                        </div>
+                                        <span class="terminal-label">PROSUMER-LISTING-TERMINAL</span>
+                                        <div class="terminal-net"><span class="live-dot"></span> HEDERA HCS</div>
+                                    </div>
+
+                                    <!-- Energy type selector -->
+                                    <div class="oc-type-row">
+                                        <button class="oc-type-btn active" type="button">Solar</button>
+                                        <button class="oc-type-btn" type="button">Wind</button>
+                                        <button class="oc-type-btn" type="button">Hydro</button>
+                                        <button class="oc-type-btn" type="button">Mixed</button>
+                                    </div>
+
+                                    <form id="offer-form">
+                                        <div class="oc-inputs">
+                                            <div class="oc-group">
+                                                <div class="oc-group-top">
+                                                    <span class="oc-lbl">Energy to Sell</span>
+                                                    <span class="oc-hint">min 0.01 kWh</span>
+                                                </div>
+                                                <div class="oc-row">
+                                                    <input
+                                                        type="number"
+                                                        id="kwh-sell-input"
+                                                        required
+                                                        step="0.01"
+                                                        placeholder="0.00"
+                                                    />
+                                                    <span class="oc-unit kwh">kWh</span>
+                                                </div>
+                                            </div>
+                                            <div class="oc-group">
+                                                <div class="oc-group-top">
+                                                    <span class="oc-lbl">Your Price</span>
+                                                    <span class="oc-hint">HBAR per kWh</span>
+                                                </div>
+                                                <div class="oc-row">
+                                                    <input
+                                                        type="number"
+                                                        id="hbar-per-kwh-input"
+                                                        required
+                                                        step="0.0001"
+                                                        placeholder="0.0000"
+                                                    />
+                                                    <span class="oc-unit hbar">HBAR/kWh</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="oc-estimate">
+                                            <div class="oc-est-lbl">Offer Preview</div>
+                                            <div class="oc-est-row">
+                                                <span class="oc-est-key">Total listing value</span
+                                                ><span class="oc-est-val green" id="oc-total-val">— HBAR</span>
+                                            </div>
+                                            <div class="oc-est-row">
+                                                <span class="oc-est-key">Price per kWh (USD)</span
+                                                ><span class="oc-est-val" id="oc-rate-usd-val">—</span>
+                                            </div>
+                                            <div class="oc-est-row">
+                                                <span class="oc-est-key">Total listing value (USD)</span
+                                                ><span class="oc-est-val" id="oc-usd-val">—</span>
+                                            </div>
+                                            <div class="oc-est-row">
+                                                <span class="oc-est-key">Hedera tx fee</span
+                                                ><span class="oc-est-val">~$0.001</span>
+                                            </div>
+                                            <div class="oc-est-row">
+                                                <span class="oc-est-key">Settlement</span
+                                                ><span class="oc-est-val green">Instant / atomic</span>
+                                            </div>
+                                        </div>
+
+                                        <div class="oc-submit-wrap">
+                                            <button type="submit" class="oc-submit">Post Energy Offer to Hedera</button>
+                                        </div>
+                                    </form>
+
+                                    <div class="oc-chain">
+                                        <div class="oc-chain-item">Hedera HTS secured</div>
+                                        <div class="oc-chain-item">On-chain listing</div>
+                                        <div class="oc-chain-item">HCS audit trail</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Market Chart (prosumer) -->
+                            <div class="card">
+                                <div class="card-header">
+                                    <div class="card-title">Market Chart</div>
+                                    <span class="live-badge"><span class="live-dot"></span> LIVE</span>
+                                </div>
+                                <div class="mc-terminal">
+                                    <div class="mc-sym-bar">
+                                        <span class="mc-sym active">HBAR/USD</span>
+                                        <span class="mc-sym">BTC/USD</span>
+                                        <span class="mc-sym">ETH/USD</span>
+                                        <span class="mc-sym">XAU/USD</span>
+                                        <span class="mc-sym">SOL/USD</span>
+                                        <span class="mc-sym-gap"></span>
+                                        <div class="mc-tf-group">
+                                            <span class="mc-tf">1m</span><span class="mc-tf">5m</span
+                                            ><span class="mc-tf">15m</span> <span class="mc-tf active">1H</span
+                                            ><span class="mc-tf">4H</span><span class="mc-tf">1D</span>
+                                        </div>
+                                    </div>
+                                    <div class="mc-price-area">
+                                        <div class="mc-price-left">
+                                            <div class="mc-pair-name">HBAR / USD, Hedera Hashgraph</div>
+                                            <div class="mc-big-price">$—</div>
+                                            <div class="mc-delta">Waiting for live quote</div>
+                                        </div>
+                                        <div class="mc-ohlc">
+                                            <div>
+                                                <div class="mc-ohlc-lbl">OPEN</div>
+                                                <div class="mc-ohlc-val">—</div>
+                                            </div>
+                                            <div>
+                                                <div class="mc-ohlc-lbl">HIGH</div>
+                                                <div class="mc-ohlc-val hi">—</div>
+                                            </div>
+                                            <div>
+                                                <div class="mc-ohlc-lbl">LOW</div>
+                                                <div class="mc-ohlc-val lo">—</div>
+                                            </div>
+                                            <div>
+                                                <div class="mc-ohlc-lbl">CLOSE</div>
+                                                <div class="mc-ohlc-val">—</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mc-chart-area">
+                                        <div class="mc-grid-lines">
+                                            <div class="mc-grid-line"></div>
+                                            <div class="mc-grid-line"></div>
+                                            <div class="mc-grid-line"></div>
+                                            <div class="mc-grid-line"></div>
+                                        </div>
+                                        <canvas class="mc-chart-canvas" id="mc-canvas-prosumer"></canvas>
+                                    </div>
+                                    <div class="mc-vol">
+                                        <span class="mc-vol-lbl">VOL 24H</span>
+                                        <div class="mc-vol-bar"><div class="mc-vol-fill"></div></div>
+                                        <span class="mc-vol-num">842.3M HBAR</span>
+                                    </div>
+                                    <div class="mc-assets">
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">BTC/USD</div>
+                                            <div class="mc-asset-px">$83,412</div>
+                                            <div class="mc-asset-chg">+1.38%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,14 10,11 20,12 30,6 40,8 50,3 60,1"
+                                                    fill="none"
+                                                    stroke="var(--accent)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset dn">
+                                            <div class="mc-asset-sym">ETH/USD</div>
+                                            <div class="mc-asset-px">$2,184</div>
+                                            <div class="mc-asset-chg">-0.72%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,2 10,4 20,3 30,7 40,10 50,12 60,14"
+                                                    fill="none"
+                                                    stroke="var(--red)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">XAU/USD</div>
+                                            <div class="mc-asset-px">$3,104</div>
+                                            <div class="mc-asset-chg">+0.91%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,13 10,11 20,12 30,9 40,7 50,5 60,3"
+                                                    fill="none"
+                                                    stroke="var(--amber)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">SOL/USD</div>
+                                            <div class="mc-asset-px">$134.22</div>
+                                            <div class="mc-asset-chg">+3.05%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,14 10,12 20,10 30,8 40,5 50,3 60,1"
+                                                    fill="none"
+                                                    stroke="var(--accent)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset dn">
+                                            <div class="mc-asset-sym">EUR/USD</div>
+                                            <div class="mc-asset-px">1.0821</div>
+                                            <div class="mc-asset-chg">-0.18%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,3 10,5 20,6 30,8 40,10 50,12 60,14"
+                                                    fill="none"
+                                                    stroke="var(--red)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                        <div class="mc-asset up">
+                                            <div class="mc-asset-sym">GBP/USD</div>
+                                            <div class="mc-asset-px">1.2938</div>
+                                            <div class="mc-asset-chg">+0.34%</div>
+                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
+                                                <polyline
+                                                    points="0,12 10,10 20,11 30,8 40,7 50,5 60,4"
+                                                    fill="none"
+                                                    stroke="var(--blue)"
+                                                    stroke-width="1.5"
+                                                    stroke-linejoin="round"
+                                                />
+                                            </svg>
+                                        </div>
+                                    </div>
+                                    <div class="mc-signals">
+                                        <span class="mc-signals-lbl">SIGNALS</span>
+                                        <span class="mc-signal bull"><span class="mc-signal-dot"></span>RSI 58.4</span>
+                                        <span class="mc-signal bull"><span class="mc-signal-dot"></span>MACD ↑</span>
+                                        <span class="mc-signal neut"><span class="mc-signal-dot"></span>BB Mid</span>
+                                        <span class="mc-signal bull"><span class="mc-signal-dot"></span>EMA20</span>
+                                    </div>
+                                    <div class="mc-footer">
+                                        <div class="mc-footer-txt">
+                                            <b>Full TradingView Terminal</b><br />Live charts, 100+ symbols, drag and
+                                            resize
+                                        </div>
+                                        <button class="btn-open-terminal" onclick="openTVPanel()">Open Terminal</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- My Posted Offers -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">My Post Offers</div>
+                            </div>
+                            <ul id="my-offer-list" style="list-style: none; padding: 0">
+                                <li>
+                                    <div class="empty-state"><p>You have not posted any offers yet.</p></div>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- ─── RECENT TRADES (both views) ─── -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">Platform Trades</div>
+                        </div>
+                        <ul id="recent-trades-list" style="list-style: none; padding: 0">
+                            <li>
+                                <div class="empty-state"><p>No trades yet.</p></div>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div id="status" class="status-box"></div>
+                </main>
+
+                <!-- News sidebar -->
+                <aside class="news-sidebar" id="news-sidebar">
+                    <div class="news-card-wrap">
+                        <div class="news-header">
+                            <div class="news-title">
+                                Live Updates
+                                <span class="live-dot"></span>
+                            </div>
+                            <button class="news-refresh" id="news-refresh-btn" title="Refresh">↻</button>
+                        </div>
+                        <div class="news-tabs">
+                            <button class="news-tab active" data-tab="blockchain">Crypto</button>
+                            <button class="news-tab" data-tab="energy">Energy</button>
+                            <button class="news-tab" data-tab="tech">AI</button>
+                            <button class="news-tab" data-tab="forex">Forex</button>
+                        </div>
+                        <div id="news-feed" class="news-feed">
+                            <div class="news-loading">
+                                <div class="news-spinner"></div>
+                                <span>Fetching updates...</span>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+     OFFER LIST TEMPLATE
+════════════════════════════════════════════════════ -->
+        <template id="offer-template">
+            <li>
+                <div class="offer-item">
+                    <div>
+                        <div class="offer-kwh"><span class="kwh">—</span> <span>kWh</span></div>
+                        <div class="offer-rate"><span class="price">—</span> HBAR/kWh</div>
+                        <div class="offer-seller">Seller: <span class="prosumer-id">—</span></div>
+                        <div class="offer-time">Posted: <span class="posted-at">—</span></div>
+                    </div>
+                    <button class="btn-select select-offer-btn">Select</button>
+                </div>
+            </li>
+        </template>
+
+        <!-- ════════════════════════════════════════════════════
+     FLOATING TRADINGVIEW TERMINAL
+════════════════════════════════════════════════════ -->
+        <div id="tv-panel">
+            <div class="tv-rz n" data-dir="n"></div>
+            <div class="tv-rz s" data-dir="s"></div>
+            <div class="tv-rz e" data-dir="e"></div>
+            <div class="tv-rz w" data-dir="w"></div>
+            <div class="tv-rz nw" data-dir="nw"></div>
+            <div class="tv-rz ne" data-dir="ne"></div>
+            <div class="tv-rz sw" data-dir="sw"></div>
+            <div class="tv-rz se" data-dir="se"></div>
+            <div class="tv-header" id="tv-drag-handle">
+                <div class="tv-title">
+                    <span class="tv-title-dot"></span>
+                    EnergySwap Trading Terminal
+                    <span class="tv-hint">Drag to move. Resize from edges.</span>
+                </div>
+                <div class="tv-controls">
+                    <button class="tv-ctrl max" id="tv-btn-max" title="Maximise">⤢</button>
+                    <button class="tv-ctrl min" id="tv-btn-min" title="Minimise">─</button>
+                    <button class="tv-ctrl cls" id="tv-btn-cls" title="Close">Close</button>
+                </div>
+            </div>
+            <div class="tv-body" id="tv-panel-body"></div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+     INLINE SCRIPTS
+════════════════════════════════════════════════════ -->
+        <script>
+            // ── Ticker tape data ────────────────────────────────
+            const TICKERS = [
+                { sym: 'HBAR/USD', px: '—', chg: '', up: false },
+                { sym: 'BTC/USD', px: '83,412.50', chg: '+1.38', up: true },
+                { sym: 'ETH/USD', px: '2,184.30', chg: '-0.72', up: false },
+                { sym: 'SOL/USD', px: '134.22', chg: '+3.05', up: true },
+                { sym: 'kWh INDEX', px: '0.1240', chg: '+0.92', up: true },
+                { sym: 'ENERGY/ℏ', px: '1.3080', chg: '-0.44', up: false },
+                { sym: 'BNB/USD', px: '608.74', chg: '+0.61', up: true },
+                { sym: 'XRP/USD', px: '2.1830', chg: '+4.22', up: true },
+                { sym: 'XAU/USD', px: '3,104.00', chg: '+0.91', up: true },
+                { sym: 'ADA/USD', px: '0.7214', chg: '-1.02', up: false },
+            ];
+
+            function buildTicker() {
+                const track = document.getElementById('ticker-track');
+                if (!track) return;
+                const items = [...TICKERS, ...TICKERS];
+                track.innerHTML = items
+                    .map(
+                        (t) => `
+        <span class="t-item">
+            <span class="t-sym">${t.sym}</span>
+            <span class="t-px">${t.px}</span>
+            <span class="${t.chg ? (t.up ? 't-up' : 't-dn') : ''}">${t.chg ? `${t.up ? '▲' : '▼'} ${t.chg}%` : 'LIVE'}</span>
+        </span>`,
+                    )
+                    .join('');
+            }
+            buildTicker();
+            const miniChartSpotUpdaters = [];
+            window.addEventListener('hbar-price-updated', (event) => {
+                const price = Number(event.detail?.priceUSD);
+                if (!Number.isFinite(price) || price <= 0) return;
+                const ticker = TICKERS.find((item) => item.sym === 'HBAR/USD');
+                if (ticker) ticker.px = price.toFixed(4);
+                buildTicker();
+                miniChartSpotUpdaters.forEach((update) => update(price));
+            });
+            setInterval(() => {
+                TICKERS.forEach((t) => {
+                    if (t.sym === 'HBAR/USD') {
+                        t.px = Number.isFinite(window.currentHbarPriceUSD)
+                            ? window.currentHbarPriceUSD.toFixed(4)
+                            : '—';
+                        return;
+                    }
+                    const raw = parseFloat(t.px.replace(/,/g, ''));
+                    const drift = (Math.random() - 0.49) * 0.012;
+                    const newPx = Math.max(0.001, raw * (1 + drift));
+                    t.px =
+                        newPx >= 1000
+                            ? newPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            : newPx.toFixed(4);
+                    const chgVal = (parseFloat(t.chg) + (Math.random() - 0.5) * 0.15).toFixed(2);
+                    t.chg = chgVal;
+                    t.up = parseFloat(chgVal) >= 0;
+                });
+                buildTicker();
+            }, 3200);
+
+            // ── Role selection background candlestick chart ──────
+            (function () {
+                const canvas = document.getElementById('role-bg-canvas');
+                if (!canvas) return;
+
+                function gen(n, base) {
+                    const out = [];
+                    let p = base;
+                    for (let i = 0; i < n; i++) {
+                        const trend = Math.sin(i * 0.15) * 0.002;
+                        const mv = (Math.random() - 0.495 + trend) * p * 0.016;
+                        const o = p,
+                            c = p + mv;
+                        out.push({
+                            o,
+                            c,
+                            h: Math.max(o, c) + Math.random() * p * 0.007,
+                            l: Math.min(o, c) - Math.random() * p * 0.007,
+                            v: 0.4 + Math.random() * 0.6,
+                        });
+                        p = c;
+                    }
+                    return out;
+                }
+
+                let candles = gen(70, 0.0948);
+
+                function draw() {
+                    canvas.width = canvas.offsetWidth;
+                    canvas.height = canvas.offsetHeight;
+                    const W = canvas.width,
+                        H = canvas.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, W, H);
+
+                    const CHART_H = H * 0.68,
+                        CHART_T = 60,
+                        VOL_T = H * 0.76,
+                        VOL_H = H * 0.18;
+                    const prices = candles.flatMap((c) => [c.h, c.l]);
+                    const minP = Math.min(...prices) * 0.998,
+                        maxP = Math.max(...prices) * 1.002;
+                    const pR = maxP - minP;
+                    const maxV = Math.max(...candles.map((c) => c.v));
+                    const cW = (W - 60) / candles.length;
+                    const bW = Math.max(2, cW * 0.5);
+                    const toY = (p) => CHART_T + CHART_H * (1 - (p - minP) / pR);
+
+                    // Grid
+                    ctx.strokeStyle = 'rgba(57,255,126,0.04)';
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i <= 5; i++) {
+                        const y = CHART_T + (CHART_H / 5) * i;
+                        ctx.beginPath();
+                        ctx.moveTo(0, y);
+                        ctx.lineTo(W - 60, y);
+                        ctx.stroke();
+                    }
+
+                    // MA
+                    const ma = candles.map((_, i) => {
+                        if (i < 13) return null;
+                        return candles.slice(i - 13, i + 1).reduce((s, c) => s + c.c, 0) / 14;
+                    });
+                    ctx.strokeStyle = 'rgba(57,255,126,0.3)';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    let ms = false;
+                    ma.forEach((v, i) => {
+                        if (!v) return;
+                        const x = 30 + i * cW + cW / 2,
+                            y = toY(v);
+                        if (!ms) {
+                            ctx.moveTo(x, y);
+                            ms = true;
+                        } else ctx.lineTo(x, y);
+                    });
+                    ctx.stroke();
+
+                    // Candles
+                    candles.forEach((c, i) => {
+                        const x = 30 + i * cW,
+                            xm = x + cW / 2,
+                            up = c.c >= c.o;
+                        ctx.strokeStyle = up ? 'rgba(57,255,126,0.45)' : 'rgba(248,113,113,0.4)';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(xm, toY(c.h));
+                        ctx.lineTo(xm, toY(c.l));
+                        ctx.stroke();
+                        const bt = toY(Math.max(c.o, c.c)),
+                            bH = Math.max(1, Math.abs(toY(c.o) - toY(c.c)));
+                        ctx.fillStyle = up ? 'rgba(57,255,126,0.75)' : 'rgba(248,113,113,0.7)';
+                        ctx.fillRect(x + (cW - bW) / 2, bt, bW, bH);
+                    });
+
+                    // Vol
+                    candles.forEach((c, i) => {
+                        const x = 30 + i * cW,
+                            up = c.c >= c.o;
+                        const bH = (c.v / maxV) * VOL_H;
+                        ctx.fillStyle = up ? 'rgba(57,255,126,0.12)' : 'rgba(248,113,113,0.1)';
+                        ctx.fillRect(x + (cW - bW) / 2, VOL_T + VOL_H - bH, bW, bH);
+                    });
+
+                    // Price line
+                    const last = candles[candles.length - 1].c;
+                    const py = toY(last);
+                    ctx.strokeStyle = 'rgba(57,255,126,0.5)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(0, py);
+                    ctx.lineTo(W - 60, py);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.fillStyle = 'rgba(57,255,126,0.9)';
+                    ctx.fillRect(W - 58, py - 9, 56, 18);
+                    ctx.fillStyle = '#030609';
+                    ctx.font = 'bold 9px monospace';
+                    ctx.fillText(last.toFixed(4), W - 55, py + 4);
+                }
+
+                draw();
+                new ResizeObserver(draw).observe(canvas);
+                setInterval(() => {
+                    const last = candles[candles.length - 1];
+                    const mv = (Math.random() - 0.495) * last.c * 0.012;
+                    const o = last.c,
+                        c = Math.max(0.001, o + mv);
+                    candles.push({
+                        o,
+                        c,
+                        h: Math.max(o, c) + Math.random() * last.c * 0.005,
+                        l: Math.min(o, c) - Math.random() * last.c * 0.005,
+                        v: 0.3 + Math.random() * 0.7,
+                    });
+                    candles.shift();
+                    draw();
+                }, 1800);
+            })();
+
+            // ── Mini market chart canvases ───────────────────────
+            function drawMiniChart(id) {
+                const canvas = document.getElementById(id);
+                if (!canvas) return;
+                const dpr = window.devicePixelRatio || 1;
+
+                function resize() {
+                    const r = canvas.getBoundingClientRect();
+                    canvas.width = r.width * dpr;
+                    canvas.height = r.height * dpr;
+                }
+                resize();
+                new ResizeObserver(resize).observe(canvas);
+
+                let candles = [];
+                const initialSpot = Number(window.currentHbarPriceUSD);
+                if (Number.isFinite(initialSpot) && initialSpot > 0) {
+                    candles = Array.from({ length: 44 }, () => ({
+                        o: initialSpot,
+                        c: initialSpot,
+                        h: initialSpot,
+                        l: initialSpot,
+                    }));
+                }
+
+                function draw() {
+                    const w = canvas.offsetWidth,
+                        h = canvas.offsetHeight;
+                    if (!w || !h) return;
+                    const ctx = canvas.getContext('2d');
+                    ctx.scale(dpr, dpr);
+                    ctx.clearRect(0, 0, w, h);
+
+                    if (!candles.length) {
+                        ctx.fillStyle = '#050b14';
+                        ctx.fillRect(0, 0, w, h);
+                        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                        ctx.font = '10px monospace';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('Waiting for live HBAR/USD quote', w / 2, h / 2);
+                        ctx.scale(1 / dpr, 1 / dpr);
+                        return;
+                    }
+
+                    const pad = { l: 6, r: 38, t: 10, b: 18 };
+                    const cW = w - pad.l - pad.r,
+                        cH = h - pad.t - pad.b;
+                    const all = candles.flatMap((c) => [c.h, c.l]);
+                    const minP = Math.min(...all) * 0.998,
+                        maxP = Math.max(...all) * 1.002;
+                    const scY = (p) => pad.t + cH - ((p - minP) / (maxP - minP)) * cH;
+
+                    // BG
+                    ctx.fillStyle = '#050b14';
+                    ctx.fillRect(0, 0, w, h);
+
+                    // Grid
+                    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i <= 4; i++) {
+                        const y = pad.t + (cH / 4) * i;
+                        ctx.beginPath();
+                        ctx.moveTo(pad.l, y);
+                        ctx.lineTo(w - pad.r, y);
+                        ctx.stroke();
+                    }
+
+                    // Area
+                    const bW2 = cW / candles.length;
+                    ctx.beginPath();
+                    candles.forEach((c, i) => {
+                        const cx = pad.l + i * bW2 + bW2 / 2,
+                            cy = scY(c.c);
+                        i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
+                    });
+                    const lx = pad.l + (candles.length - 1) * bW2 + bW2 / 2;
+                    ctx.lineTo(lx, h);
+                    ctx.lineTo(pad.l, h);
+                    ctx.closePath();
+                    const ag = ctx.createLinearGradient(0, pad.t, 0, h);
+                    ag.addColorStop(0, 'rgba(57,255,126,0.1)');
+                    ag.addColorStop(1, 'rgba(57,255,126,0.01)');
+                    ctx.fillStyle = ag;
+                    ctx.fill();
+
+                    // Candles
+                    const bodyW = Math.max(2, bW2 * 0.52);
+                    candles.forEach((c, i) => {
+                        const cx = pad.l + i * bW2 + bW2 / 2,
+                            up = c.c >= c.o;
+                        ctx.strokeStyle = up ? 'var(--accent)' : '#f87171';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(cx, scY(c.h));
+                        ctx.lineTo(cx, scY(c.l));
+                        ctx.stroke();
+                        const bt = scY(Math.max(c.o, c.c)),
+                            bH = Math.max(1, Math.abs(scY(c.o) - scY(c.c)));
+                        ctx.fillStyle = up ? 'rgba(57,255,126,0.8)' : 'rgba(248,113,113,0.8)';
+                        ctx.fillRect(cx - bodyW / 2, bt, bodyW, bH);
+                    });
+
+                    // Price tag
+                    const lc = candles[candles.length - 1].c,
+                        py2 = scY(lc);
+                    ctx.strokeStyle = 'rgba(57,255,126,0.5)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.moveTo(pad.l, py2);
+                    ctx.lineTo(w - pad.r, py2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.fillStyle = 'rgba(57,255,126,0.9)';
+                    ctx.fillRect(w - pad.r + 1, py2 - 7, pad.r - 2, 14);
+                    ctx.fillStyle = '#030609';
+                    ctx.font = `bold ${8 * dpr * 0.55}px monospace`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText('$' + lc.toFixed(4), w - pad.r / 2, py2 + 3);
+                    ctx.scale(1 / dpr, 1 / dpr);
+                }
+
+                miniChartSpotUpdaters.push((price) => {
+                    if (!candles.length) {
+                        candles = Array.from({ length: 44 }, () => ({ o: price, c: price, h: price, l: price }));
+                    } else {
+                        const previous = candles[candles.length - 1];
+                        candles.push({
+                            o: previous.c,
+                            c: price,
+                            h: Math.max(previous.c, price),
+                            l: Math.min(previous.c, price),
+                        });
+                        candles.shift();
+                    }
+                    const last = candles[candles.length - 1];
+                    draw();
+                    const terminal = canvas.closest('.mc-terminal');
+                    const headline = terminal?.querySelector('.mc-big-price');
+                    if (headline) headline.textContent = `$${price.toFixed(4)}`;
+                    const ohlc = terminal?.querySelectorAll('.mc-ohlc-val');
+                    if (ohlc?.length === 4) {
+                        [last.o, last.h, last.l, last.c].forEach((value, index) => {
+                            ohlc[index].textContent = value.toFixed(4);
+                        });
+                    }
+                    const delta = terminal?.querySelector('.mc-delta');
+                    if (delta) {
+                        const change = last.c - last.o;
+                        const percent = last.o ? (change / last.o) * 100 : 0;
+                        delta.className = `mc-delta ${change >= 0 ? 'up' : 'dn'}`;
+                        delta.textContent = `${change >= 0 ? '▲' : '▼'} ${change >= 0 ? '+' : ''}${change.toFixed(4)} (${percent.toFixed(2)}%) live candle`;
+                    }
+                });
+                const currentSpot = Number(window.currentHbarPriceUSD);
+                if (Number.isFinite(currentSpot) && currentSpot > 0) {
+                    miniChartSpotUpdaters[miniChartSpotUpdaters.length - 1](currentSpot);
+                } else {
+                    draw();
+                }
+            }
+
+            let mcInit = { consumer: false, prosumer: false };
+            function initMcCanvas(slot) {
+                if (!mcInit[slot]) {
+                    mcInit[slot] = true;
+                    drawMiniChart('mc-canvas-' + slot);
+                }
+            }
+
+            // ── TradingView floating terminal ─────────────────────
+            let tvReady = false;
+            function openTVPanel() {
+                const panel = document.getElementById('tv-panel');
+                panel.classList.add('visible');
+                if (!panel._pos) {
+                    panel._pos = true;
+                    panel.style.transform = 'none';
+                    panel.style.left = Math.max(0, (window.innerWidth - panel.offsetWidth) / 2) + 'px';
+                    panel.style.top = Math.max(0, (window.innerHeight - panel.offsetHeight) / 2) + 'px';
+                }
+                if (!tvReady) {
+                    tvReady = true;
+                    const body = document.getElementById('tv-panel-body');
+                    const wrap = document.createElement('div');
+                    wrap.className = 'tradingview-widget-container';
+                    wrap.style.cssText = 'width:100%;height:100%;';
+                    const inner = document.createElement('div');
+                    inner.className = 'tradingview-widget-container__widget';
+                    inner.style.cssText = 'width:100%;height:100%;';
+                    wrap.appendChild(inner);
+                    const s = document.createElement('script');
+                    s.type = 'text/javascript';
+                    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+                    s.async = true;
+                    s.innerHTML = JSON.stringify({
+                        autosize: true,
+                        symbol: 'CRYPTO:HBARUSD',
+                        interval: '60',
+                        timezone: 'Europe/London',
+                        theme: 'dark',
+                        style: '1',
+                        locale: 'en',
+                        backgroundColor: '#131722',
+                        gridColor: 'rgba(57,255,126,0.04)',
+                        withdateranges: true,
+                        range: '1D',
+                        hide_side_toolbar: false,
+                        allow_symbol_change: true,
+                        save_image: true,
+                        studies: ['STD;MACD', 'STD;RSI'],
+                        watchlist: [
+                            'CRYPTO:HBARUSD',
+                            'CRYPTO:BTCUSD',
+                            'CRYPTO:ETHUSD',
+                            'CRYPTO:SOLUSD',
+                            'CRYPTO:ADAUSD',
+                            'CRYPTO:XRPUSD',
+                            'FX:EURUSD',
+                            'FX:GBPUSD',
+                            'FX:USDJPY',
+                            'FOREXCOM:DXY',
+                            'TVC:USOIL',
+                            'INDEX:SPX',
+                        ],
+                        details: true,
+                        hotlist: true,
+                        calendar: false,
+                        show_popup_button: true,
+                        popup_width: '1200',
+                        popup_height: '700',
+                        support_host: 'https://www.tradingview.com',
+                    });
+                    wrap.appendChild(s);
+                    body.appendChild(wrap);
+                }
+                bindTV();
+            }
+
+            let tvBound = false;
+            function bindTV() {
+                if (tvBound) return;
+                tvBound = true;
+                const panel = document.getElementById('tv-panel'),
+                    hdr = document.getElementById('tv-drag-handle');
+                let drag = null,
+                    rsz = null;
+                const ov = document.createElement('div');
+                ov.id = 'tv-ov';
+                ov.style.cssText = 'position:fixed;inset:0;z-index:9400;display:none;';
+                document.body.appendChild(ov);
+                const oly = (on) => (ov.style.display = on ? 'block' : 'none');
+
+                hdr.addEventListener('mousedown', (e) => {
+                    if (e.target.closest('.tv-ctrl')) return;
+                    e.preventDefault();
+                    drag = { sx: e.clientX, sy: e.clientY, sl: panel.offsetLeft, st: panel.offsetTop };
+                    panel.style.transform = 'none';
+                    oly(true);
+                });
+                panel.querySelectorAll('.tv-rz').forEach((h) => {
+                    h.addEventListener('mousedown', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        rsz = {
+                            dir: h.dataset.dir,
+                            sx: e.clientX,
+                            sy: e.clientY,
+                            sl: panel.offsetLeft,
+                            st: panel.offsetTop,
+                            sw: panel.offsetWidth,
+                            sh: panel.offsetHeight,
+                        };
+                        oly(true);
+                    });
+                });
+                document.addEventListener('mousemove', (e) => {
+                    if (drag) {
+                        const dx = e.clientX - drag.sx,
+                            dy = e.clientY - drag.sy;
+                        panel.style.left =
+                            Math.max(0, Math.min(drag.sl + dx, window.innerWidth - panel.offsetWidth)) + 'px';
+                        panel.style.top =
+                            Math.max(0, Math.min(drag.st + dy, window.innerHeight - panel.offsetHeight)) + 'px';
+                    }
+                    if (rsz) {
+                        const dx = e.clientX - rsz.sx,
+                            dy = e.clientY - rsz.sy,
+                            d = rsz.dir,
+                            MW = 360,
+                            MH = 300;
+                        let l = rsz.sl,
+                            t = rsz.st,
+                            w = rsz.sw,
+                            h = rsz.sh;
+                        if (d.includes('e')) w = Math.max(MW, rsz.sw + dx);
+                        if (d.includes('s')) h = Math.max(MH, rsz.sh + dy);
+                        if (d.includes('w')) {
+                            w = Math.max(MW, rsz.sw - dx);
+                            l = rsz.sl + rsz.sw - w;
+                        }
+                        if (d.includes('n')) {
+                            h = Math.max(MH, rsz.sh - dy);
+                            t = rsz.st + rsz.sh - h;
+                        }
+                        panel.style.left = l + 'px';
+                        panel.style.top = t + 'px';
+                        panel.style.width = w + 'px';
+                        panel.style.height = h + 'px';
+                        panel.style.right = panel.style.bottom = 'unset';
+                    }
+                });
+                document.addEventListener('mouseup', () => {
+                    drag = null;
+                    rsz = null;
+                    oly(false);
+                });
+
+                let minimised = false;
+                document
+                    .getElementById('tv-btn-cls')
+                    .addEventListener('click', () => panel.classList.remove('visible'));
+                document.getElementById('tv-btn-min').addEventListener('click', () => {
+                    const body = document.getElementById('tv-panel-body'),
+                        btn = document.getElementById('tv-btn-min');
+                    minimised = !minimised;
+                    body.style.display = minimised ? 'none' : '';
+                    panel.style.height = minimised ? 'auto' : '';
+                    btn.textContent = minimised ? '⬜' : '─';
+                    btn.title = minimised ? 'Restore' : 'Minimise';
+                    panel.querySelectorAll('.tv-rz').forEach((r) => (r.style.pointerEvents = minimised ? 'none' : ''));
+                });
+                document.getElementById('tv-btn-max').addEventListener('click', () => {
+                    const btn = document.getElementById('tv-btn-max');
+                    if (panel._maxed) {
+                        const p = panel._prev;
+                        panel.style.left = p.l;
+                        panel.style.top = p.t;
+                        panel.style.width = p.w;
+                        panel.style.height = p.h;
+                        panel.style.borderRadius = '';
+                        panel._maxed = false;
+                        btn.textContent = '⤢';
+                        btn.title = 'Maximise';
+                    } else {
+                        panel._prev = {
+                            l: panel.style.left,
+                            t: panel.style.top,
+                            w: panel.style.width,
+                            h: panel.style.height,
+                        };
+                        panel.style.left = '0';
+                        panel.style.top = '0';
+                        panel.style.width = '100vw';
+                        panel.style.height = '100vh';
+                        panel.style.borderRadius = '0';
+                        panel._maxed = true;
+                        btn.textContent = '⤡';
+                        btn.title = 'Restore';
+                    }
+                });
+            }
+        </script>
+
+        <script type="module" src="/src/main.js"></script>
+    </body>
+</html>

@@ -1,0 +1,61 @@
+name: EnergySwap backend CI
+
+on:
+  push:
+    paths:
+      - 'EnergySwapBackend/**'
+      - 'EnergySwapFrontend/**'
+      - 'render.yaml'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'EnergySwapBackend/**'
+      - 'EnergySwapFrontend/**'
+      - 'render.yaml'
+      - '.github/workflows/backend-ci.yml'
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: energyswap
+          POSTGRES_PASSWORD: energyswap-ci
+          POSTGRES_DB: energyswap_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U energyswap -d energyswap_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      TEST_DATABASE_URL: postgresql://energyswap:energyswap-ci@localhost:5432/energyswap_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: EnergySwapBackend/package-lock.json
+      - run: npm ci
+        working-directory: EnergySwapBackend
+      - run: npm test
+        working-directory: EnergySwapBackend
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: EnergySwapFrontend/package-lock.json
+      - run: npm ci
+        working-directory: EnergySwapFrontend
+      - run: npm run build
+        working-directory: EnergySwapFrontend

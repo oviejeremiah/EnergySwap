@@ -1,0 +1,25 @@
+# Dependencies
+**/node_modules/
+**/dist/
+coverage/
+
+# Environment variables
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Local data and database files
+db.json
+**/db.json
+*.sqlite
+*.sqlite3
+*.db
+
+# Private keys, logs, and local output
+*.pem
+*.key
+*.log
+npm-debug.log*

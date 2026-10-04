@@ -1,0 +1,29 @@
+// C:\Cyber Security\ProjectCode\EnergySwapFrontend\jsconfig.json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react",
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true, // THIS IS THE KEY SETTING for type checking in .js files
+    "noEmit": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "src/**/*.js",
+    "src/**/*.jsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "vite.config.js"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

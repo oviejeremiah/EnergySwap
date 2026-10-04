@@ -1,0 +1,40 @@
+databases:
+  - name: energyswap-postgres
+    databaseName: energyswap
+    user: energyswap
+    plan: basic-256mb
+    region: oregon
+
+services:
+  - type: web
+    name: energyswap-api
+    runtime: node
+    rootDir: EnergySwapBackend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health/ready
+    plan: starter
+    region: oregon
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: NODE_ENV
+        value: production
+      - key: HEDERA_NETWORK
+        value: testnet
+      - key: DATABASE_URL
+        fromDatabase:
+          name: energyswap-postgres
+          property: connectionString
+      - key: CORS_ORIGINS
+        sync: false
+      - key: OPERATOR_ID
+        sync: false
+      - key: OPERATOR_KEY
+        sync: false
+      - key: HCS_TOPIC_ID
+        sync: false
+      - key: ENERGY_TOKEN_ID
+        sync: false
+      - key: METER_ORACLE_PUBLIC_KEY
+        sync: false

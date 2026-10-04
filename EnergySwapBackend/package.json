@@ -1,0 +1,31 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --test",
+    "start": "node server.js",
+    "migrate": "node scripts/migrate.js",
+    "import-json": "node scripts/import-json.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "description": "EnergySwap API and persistence layer",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "dependencies": {
+    "@hashgraph/sdk": "^2.81.0",
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.0.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.3.1",
+    "helmet": "^8.1.0",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.4"
+  }
+}
