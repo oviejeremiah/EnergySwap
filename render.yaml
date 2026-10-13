@@ -4,6 +4,13 @@ databases:
     user: energyswap
     plan: basic-256mb
     region: oregon
+    postgresMajorVersion: 16
+    # Internal only. Omitting this makes Render accept connections from any IP
+    # for a newly created database, so a leaked DATABASE_URL — in a log, a crash
+    # dump, an env dump — would hand an attacker direct internet access to the
+    # whole ledger, bypassing the API and every check in it. The web service
+    # reaches Postgres over Render's private network, so nothing breaks.
+    ipAllowList: []
 
 services:
   - type: web
@@ -15,6 +22,9 @@ services:
     healthCheckPath: /health/ready
     plan: starter
     region: oregon
+    # Do not ship on a bare commit. backend-ci.yml runs the test suite, but
+    # without this a commit that fails `npm test` still deploys to the live API.
+    autoDeployTrigger: checksPass
     envVars:
       - key: NODE_VERSION
         value: 22.16.0
@@ -28,9 +38,11 @@ services:
           property: connectionString
       - key: CORS_ORIGINS
         sync: false
-      - key: OPERATOR_ID
-        sync: false
-      - key: OPERATOR_KEY
+      # Without this, production runs with offer posting unauthenticated:
+      # anyone could post an offer claiming any Hedera account as prosumerId.
+      # The cost is that posting requires a wallet signature, so confirm the
+      # client flow handles the extra prompt before enabling on a public host.
+      - key: REQUIRE_WALLET_SIGNATURE
         sync: false
       - key: HCS_TOPIC_ID
         sync: false

@@ -44,6 +44,16 @@ const BINDING_PURPOSE = 'energyswap.identity-binding.v1';
 // nonce has little value, long enough to survive a wallet round trip.
 const NONCE_TTL_MS = 10 * 60 * 1000;
 
+// Mirror-node calls are bounded. An upstream that never answers must not hold a
+// request socket open indefinitely.
+const MIRROR_TIMEOUT_MS = 8000;
+
+// Hard ceiling on outstanding nonces. These maps are in-process and were
+// previously unbounded: an unauthenticated caller could issue nonces forever
+// and grow memory monotonically. Expiry alone is not a bound, because an
+// attacker can issue faster than the TTL expires.
+const MAX_PENDING_NONCES = 10_000;
+
 // ─── EVM address handling ───────────────────────────────────────────────────
 
 /**
@@ -91,10 +101,24 @@ function isHederaAccountId(value) {
 /** nonce -> { evmAddress, hederaAccountId, createdAt } */
 const pendingNonces = new Map();
 
-/** Drop nonces that can no longer be used. Called on every issue/verify. */
+/**
+ * Drop nonces that can no longer be used, and enforce the size ceiling.
+ *
+ * Called on every issue and verify. Maps iterate in insertion order, so the
+ * oldest entry is the first key - which is the one to evict when the ceiling is
+ * reached. Inserts follow a TTL scan and the store is capped, so neither the
+ * memory footprint nor the cost of this scan grows without bound under flood.
+ */
 function purgeExpiredNonces(now = Date.now()) {
     for (const [nonce, record] of pendingNonces) {
         if (now - record.createdAt > NONCE_TTL_MS) pendingNonces.delete(nonce);
+    }
+    // Expiry is not a bound on its own: a caller issuing nonces faster than the
+    // TTL expires would grow this map forever.
+    while (pendingNonces.size > MAX_PENDING_NONCES) {
+        const oldest = pendingNonces.keys().next();
+        if (oldest.done) break;
+        pendingNonces.delete(oldest.value);
     }
 }
 
@@ -187,7 +211,24 @@ async function fetchTopicMessages({ mirrorNodeUrl, topicId, limit = 25 }) {
     const base = String(mirrorNodeUrl).replace(/\/+$/, '');
     const url = `${base}/api/v1/consensus/topics/${encodeURIComponent(topicId)}/messages?limit=${limit}&order=desc`;
 
-    const response = await fetch(url, { headers: { accept: 'application/json' } });
+    // Bounded on purpose. Without a timeout a slow or hanging mirror node holds the
+    // Express request and its socket open indefinitely, and because this route
+    // sits behind the write rate limiter an unauthenticated caller can pin one
+    // socket per request open forever. verifyBinding already treats a fetch
+    // failure as "not verified", so aborting here fails closed.
+    let response;
+    try {
+        response = await fetch(url, {
+            headers: { accept: 'application/json' },
+            signal: AbortSignal.timeout(MIRROR_TIMEOUT_MS),
+        });
+    } catch (error) {
+        if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+            throw new Error(`Mirror node did not respond within ${MIRROR_TIMEOUT_MS}ms.`);
+        }
+        throw new Error(`Mirror node request failed: ${error.message}`);
+    }
+
     // An empty topic 404s on the Hedera mirror node. That is "no messages",
     // not an error worth failing the request over.
     if (response.status === 404) return [];
@@ -291,6 +332,111 @@ function _resetNonces() {
     pendingNonces.clear();
 }
 
+// ─── Unlink challenges ──────────────────────────────────────────────────────
+//
+// Unlinking removes a binding without any on-chain evidence being retracted, so
+// unlike a bind it cannot be verified against the network. It has to be
+// authorised by the wallet itself: the caller signs a server-issued nonce, and
+// the recovered address must be the one being unlinked.
+//
+// Without this the DELETE endpoint is a griefing primitive - anyone could
+// enumerate addresses and de-link every user on the platform.
+
+/** nonce -> { evmAddress, createdAt } */
+const unlinkChallenges = new Map();
+
+const UNLINK_TTL_MS = 10 * 60 * 1000;
+
+function purgeExpiredUnlinkChallenges(now = Date.now()) {
+    for (const [nonce, record] of unlinkChallenges) {
+        if (now - record.createdAt > UNLINK_TTL_MS) unlinkChallenges.delete(nonce);
+    }
+    // Same reasoning as the binding nonce store: this endpoint is
+    // unauthenticated, so an unbounded map is a memory-growth target.
+    while (unlinkChallenges.size > MAX_PENDING_NONCES) {
+        const oldest = unlinkChallenges.keys().next();
+        if (oldest.done) break;
+        unlinkChallenges.delete(oldest.value);
+    }
+}
+
+/**
+ * Issue a single-use nonce the wallet must sign to authorise an unlink.
+ *
+ * @param {{evmAddress: string}} params
+ * @returns {{nonce: string, message: string, expiresAt: string}}
+ */
+function issueUnlinkChallenge({ evmAddress }) {
+    const evm = normaliseEvmAddress(evmAddress);
+    if (!evm) throw new Error('evmAddress is not a valid EVM address.');
+
+    purgeExpiredUnlinkChallenges();
+
+    const nonce = crypto.randomBytes(24).toString('hex');
+    // The message is what the wallet actually signs, so it states the intent
+    // plainly rather than being an opaque nonce - the user should see what they
+    // are authorising in their wallet.
+    const message = `EnergySwap: unlink ${evm}\n\nNonce: ${nonce}\nThis cannot be reversed by signing another request.`;
+
+    unlinkChallenges.set(nonce, { evmAddress: evm, message, createdAt: Date.now() });
+
+    return {
+        nonce,
+        message,
+        expiresAt: new Date(Date.now() + UNLINK_TTL_MS).toISOString(),
+    };
+}
+
+/**
+ * Verify an unlink authorisation and consume its nonce.
+ *
+ * @param {{evmAddress: string, nonce: string, signature: string}} params
+ * @returns {{ok: boolean, reason?: string}}
+ */
+function verifyUnlinkChallenge({ evmAddress, nonce, signature }) {
+    const evm = normaliseEvmAddress(evmAddress);
+    if (!evm) return { ok: false, reason: 'evmAddress is not a valid EVM address.' };
+
+    purgeExpiredUnlinkChallenges();
+
+    const record = typeof nonce === 'string' ? unlinkChallenges.get(nonce) : null;
+    if (!record) return { ok: false, reason: 'unlink nonce is unknown or already used.' };
+    if (Date.now() - record.createdAt > UNLINK_TTL_MS) {
+        unlinkChallenges.delete(nonce);
+        return { ok: false, reason: 'unlink nonce has expired.' };
+    }
+    // The nonce must have been issued for this exact address.
+    if (record.evmAddress !== evm) {
+        return { ok: false, reason: 'unlink nonce was issued for a different address.' };
+    }
+    if (typeof signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+        return { ok: false, reason: 'signature must be a 65-byte hex signature.' };
+    }
+
+    // Recover the signer and require it to be the address being unlinked.
+    // The message is taken from the issued record, not rebuilt here, so the
+    // signed bytes are exactly the ones the caller was shown.
+    let recovered = null;
+    try {
+        // EIP-191 personal_sign, matching what wallets produce for signMessage.
+        const { verifyMessage } = require('ethers');
+        recovered = verifyMessage(record.message, signature);
+    } catch {
+        recovered = null;
+    }
+    if (!recovered || recovered.toLowerCase() !== evm) {
+        return { ok: false, reason: 'signature does not prove control of that wallet.' };
+    }
+
+    unlinkChallenges.delete(nonce);
+    return { ok: true };
+}
+
+/** Clear issued unlink challenges. Test helper. */
+function _resetUnlinkChallenges() {
+    unlinkChallenges.clear();
+}
+
 module.exports = {
     BINDING_PURPOSE,
     NONCE_TTL_MS,
@@ -302,5 +448,8 @@ module.exports = {
     buildAttestation,
     fetchTopicMessages,
     verifyBinding,
+    issueUnlinkChallenge,
+    verifyUnlinkChallenge,
     _resetNonces,
+    _resetUnlinkChallenges,
 };

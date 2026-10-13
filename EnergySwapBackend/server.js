@@ -30,7 +30,14 @@ const { getHbarPrice, getPrices, getOhlc, listSymbols, listTimeframes } = requir
 const { issueChallenge, verifyChallenge } = require('./wallet-auth');
 // isHederaAccountId is deliberately not imported from here: this file has its
 // own stricter version that additionally round-trips through the Hedera SDK.
-const { issueBindingNonce, verifyBinding, normaliseEvmAddress, BINDING_PURPOSE } = require('./identity-binding');
+const {
+    issueBindingNonce,
+    verifyBinding,
+    normaliseEvmAddress,
+    issueUnlinkChallenge,
+    verifyUnlinkChallenge,
+    BINDING_PURPOSE,
+} = require('./identity-binding');
 const { loadConfig } = require('./config');
 const database = require('./database');
 const repository = require('./repository');
@@ -186,7 +193,10 @@ function logNewsKeyStatus() {
 // Proves the caller controls the Hedera account they claim. Gated behind
 // REQUIRE_WALLET_SIGNATURE so existing flows keep working until enabled.
 
-app.get('/api/wallet-auth/challenge', (req, res) => {
+// Rate limited like every other route that allocates server-side state. Issuing
+// a challenge creates a nonce entry, so an unlimited endpoint is an unlimited
+// allocation endpoint.
+app.get('/api/wallet-auth/challenge', writeRateLimiter, (req, res) => {
     if (!app.locals.config.requireWalletSignature) {
         return res.status(404).json({ success: false, message: 'Wallet authentication is not enabled.' });
     }
@@ -257,7 +267,14 @@ app.post('/api/identity/binding/nonce', writeRateLimiter, (req, res) => {
                 'POST /api/identity/binding/verify with the same nonce.',
         });
     } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+        // Only validation messages from issueBindingNonce reach this path today,
+        // but an unfiltered `error.message` here is exactly the disclosure that
+        // was removed from the other routes. Keep the log, fix the response.
+        console.error('[Identity] Nonce issue failed:', error.message, 'requestId:', req.requestId);
+        res.status(400).json({
+            success: false,
+            message: 'evmAddress must be a 20-byte hex EVM address and hederaAccountId a Hedera account ID.',
+        });
     }
 });
 
@@ -282,7 +299,18 @@ app.post('/api/identity/binding/verify', writeRateLimiter, async (req, res) => {
         if (!result.ok) {
             // 409 rather than 400: the request was well-formed, the chain just
             // does not (yet) show the proof.
-            return res.status(409).json({ success: false, message: result.reason });
+            //
+            // `result.reason` is written for logs, not clients: it can quote an
+            // upstream message such as a mirror node HTTP status. Log it and
+            // return a fixed string.
+            console.warn('[Identity] Binding verification refused:', result.reason, 'requestId:', req.requestId);
+            return res.status(409).json({
+                success: false,
+                message:
+                    'No matching on-chain attestation was found for this wallet and Hedera account. ' +
+                    'Confirm the Hedera account submitted it, then try again.',
+                requestId: req.requestId,
+            });
         }
 
         const binding = await app.locals.repository.saveIdentityBinding({
@@ -327,13 +355,46 @@ app.get('/api/identity/binding', async (req, res) => {
     }
 });
 
-/** Unlink a sign-in wallet from its Hedera account. */
+/**
+ * Step 1 of unlinking: a nonce the wallet must sign.
+ *
+ * Unlinking cannot be verified against the network the way a bind can, so the
+ * authorisation has to come from the wallet itself.
+ */
+app.post('/api/identity/binding/unlink-nonce', writeRateLimiter, (req, res) => {
+    try {
+        const evmAddress = String(req.body?.evmAddress || '').trim();
+        res.json({ success: true, ...issueUnlinkChallenge({ evmAddress }) });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * Unlink a sign-in wallet from its Hedera account.
+ *
+ * Requires a signature over a server-issued nonce, recovered to the address
+ * being unlinked. Without that check anyone could enumerate addresses and
+ * de-link every user on the platform.
+ */
 app.delete('/api/identity/binding', writeRateLimiter, async (req, res) => {
     try {
         const evmAddress = String(req.body?.evmAddress || req.query?.evmAddress || '').trim();
         if (!normaliseEvmAddress(evmAddress)) {
             return res.status(400).json({ success: false, message: 'evmAddress must be a 20-byte hex EVM address.' });
         }
+
+        const authorisation = verifyUnlinkChallenge({
+            evmAddress,
+            nonce: req.body?.unlinkNonce,
+            signature: req.body?.unlinkSignature,
+        });
+        if (!authorisation.ok) {
+            // 403 not 401: the request was well-formed, the caller simply has
+            // not proven they control the wallet being unlinked.
+            return res.status(403).json({ success: false, message: authorisation.reason });
+        }
+
         const removed = await app.locals.repository.deleteIdentityBinding(evmAddress);
         res.json({
             success: true,
@@ -561,18 +622,44 @@ app.post('/api/oracle/readings', writeRateLimiter, async (req, res) => {
  * Kept pure so the rule that gates value release can be tested directly rather
  * than only through the route. Returns null when acceptable, else a reason.
  *
- * @param {{transfers: Array<{accountId: {toString(): string}, amount: {toTinybars(): string|Long}>}>}} htsRecord
+ * The tokenId check is load-bearing. On Hedera a plain HBAR transfer also
+ * produces a leg to the recipient, with `tokenId` absent and an amount scaled
+ * in tinybar. Matching on account and amount alone therefore accepted an
+ * ordinary HBAR payment as proof that energy tokens had been credited - which
+ * would let anyone mark a reading released without transferring a single token.
+ * Every leg considered must therefore be a leg of the configured energy token.
+ *
+ * @param {{transfers: Array<{accountId: {toString(): string}, amount: {toTinybars(): string|Long},
+ *                            tokenId?: {toString(): string}|null}>}} htsRecord
  * @param {string} prosumerId
  * @param {number|bigint} tokenUnits
+ * @param {string} energyTokenId  The token that must appear on the credit leg.
  */
-function htsCreditError(htsRecord, prosumerId, tokenUnits) {
+function htsCreditError(htsRecord, prosumerId, tokenUnits, energyTokenId) {
+    const expectedToken = String(energyTokenId || '');
+    if (!expectedToken) {
+        return 'Energy token is not configured, so a credit cannot be verified.';
+    }
+
+    const matchesToken = (leg) => String(leg?.tokenId ?? '') === expectedToken;
+
     // The prosumer RECEIVES the energy tokens, so their leg of the transfer is
     // positive. Looking for a negative leg here would reject every valid credit.
     const credit = (htsRecord?.transfers || []).find(
-        (t) => t.accountId.toString() === prosumerId && BigInt(t.amount.toTinybars()) > BigInt(0),
+        (t) =>
+            t.accountId.toString() === prosumerId &&
+            BigInt(t.amount.toTinybars()) > BigInt(0) &&
+            matchesToken(t),
     );
     if (!credit) {
-        return 'The reported HTS transaction does not credit the prosumer at all.';
+        // Distinguish "wrong instrument" from "no credit at all" so the failure
+        // is diagnosable rather than merely refused.
+        const paidInHbar = (htsRecord?.transfers || []).some(
+            (t) => t.accountId.toString() === prosumerId && !t.tokenId,
+        );
+        return paidInHbar
+            ? 'The reported transaction paid the prosumer in HBAR, not in energy tokens.'
+            : 'The reported HTS transaction does not credit the prosumer in energy tokens.';
     }
     if (BigInt(credit.amount.toTinybars()) !== BigInt(tokenUnits)) {
         return 'The reported HTS transaction credits a different amount than the attested energy.';
@@ -650,7 +737,12 @@ app.post('/api/oracle/readings/:readingId/settlement', writeRateLimiter, async (
         }
 
         // Confirm the token actually moved to the prosumer for this reading.
-        const creditProblem = htsCreditError(htsRecord, reading.prosumerId, reading.tokenUnits);
+        const creditProblem = htsCreditError(
+            htsRecord,
+            reading.prosumerId,
+            reading.tokenUnits,
+            app.locals.config.energyTokenId,
+        );
         if (creditProblem) {
             return res.status(400).json({
                 success: false,
@@ -805,6 +897,24 @@ app.post('/api/record-trade', writeRateLimiter, async (req, res) => {
         if (!Number.isFinite(requestedKwh) || requestedKwh <= 0 || requestedKwh > 1_000_000)
             return res.status(400).json({ success: false, message: 'energyAmountKWh must be a positive number.' });
         const kwhTraded = Number(requestedKwh.toFixed(8));
+
+        // The offer's remaining energy is a hard ceiling. The frontend enforces
+        // it, but a client is not a control: without this check an API-direct
+        // caller could claim more kWh than the offer holds. recordTrade would
+        // then set the row to 'reconciliation_required' and NOT debit the
+        // offer - and nothing anywhere transitions that status back, while a
+        // re-POST of the same transaction returns 409 forever. The result is a
+        // paid trade stuck permanently outside the completed set and invisible
+        // through /api/trades. Refusing here costs the buyer nothing: the
+        // payment is only verified after this point, so nothing was charged.
+        const availableKwh = Number(offer.energyAmountKWh);
+        if (kwhTraded > availableKwh + 1e-8) {
+            return res.status(400).json({
+                success: false,
+                message: `This offer only has ${availableKwh} kWh available; ${kwhTraded} kWh was requested.`,
+            });
+        }
+
         const hbarAmount = Number((kwhTraded * offer.hbarPerKWh).toFixed(8));
         if (hbarAmount <= 0)
             return res

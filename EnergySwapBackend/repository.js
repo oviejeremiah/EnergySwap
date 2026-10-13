@@ -162,13 +162,39 @@ async function recordTrade(trade, targetPool = getPool()) {
             );
         }
 
+        // Migration 003 added buyer_address, seller_address, payment_amount and
+        // payment_fee as NOT NULL with no default, but this INSERT still listed
+        // only the original fourteen columns. Every insert therefore failed with
+        // SQLSTATE 23502 - which meant the money moved, the row did not, and the
+        // buyer was told the trade could not be recorded.
+        //
+        // The values are supplied explicitly rather than via column defaults, so
+        // a caller that omits one gets a clear error here instead of an opaque
+        // constraint violation after the payment has already happened.
+        const settlementFields = {
+            buyerAddress: trade.buyerId,
+            sellerAddress: trade.sellerId,
+            paymentAmount: trade.hbarAmount,
+            paymentFee: trade.gasFeeHbar,
+        };
+        for (const [field, value] of Object.entries(settlementFields)) {
+            if (value === null || value === undefined) {
+                await client.query('ROLLBACK');
+                throw new Error(
+                    `Cannot record trade ${trade.id}: ${field} is required but was not supplied.`,
+                );
+            }
+        }
+
         const inserted = await client.query(
             `INSERT INTO trades (
                 id, offer_id, buyer_id, seller_id, transaction_id, energy_amount_kwh,
                 hbar_amount, hbar_per_kwh, gas_fee_hbar, total_hbar_paid,
-                hbar_price_usd, gas_fee_usd, created_at, status
+                hbar_price_usd, gas_fee_usd, created_at, status,
+                buyer_address, seller_address, payment_amount, payment_fee
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18
             ) RETURNING *`,
             [
                 trade.id,
@@ -185,6 +211,10 @@ async function recordTrade(trade, targetPool = getPool()) {
                 trade.gasFeeUSD,
                 trade.timestamp,
                 status,
+                settlementFields.buyerAddress,
+                settlementFields.sellerAddress,
+                settlementFields.paymentAmount,
+                settlementFields.paymentFee,
             ],
         );
         await client.query('COMMIT');
@@ -194,8 +224,20 @@ async function recordTrade(trade, targetPool = getPool()) {
         };
     } catch (error) {
         await client.query('ROLLBACK');
-        if (error.code === '23505' && error.constraint === 'trades_transaction_id_key') {
-            const prior = await targetPool.query('SELECT * FROM trades WHERE transaction_id = $1', [trade.transactionId]);
+        // Unique violation on trades. Match the SQLSTATE rather than the
+        // constraint name: migration 003 dropped `trades_transaction_id_key` in
+        // favour of `trades_settlement_network_transaction_id_key`, so the old
+        // name could never match and this branch was dead - a duplicate trade
+        // surfaced as a 500 instead of the idempotent "already recorded".
+        if (error.code === '23505') {
+            // Re-read to discriminate a genuine duplicate from a different row
+            // that merely collided on the same constraint.
+            const prior = await targetPool.query(
+                `SELECT * FROM trades
+                 WHERE transaction_id = $1
+                   AND settlement_network = COALESCE($2, 'hedera-testnet')`,
+                [trade.transactionId, trade.settlementNetwork ?? null],
+            );
             if (prior.rows[0]) return { kind: 'duplicate', trade: mapTrade(prior.rows[0]) };
         }
         throw error;
@@ -337,7 +379,15 @@ async function saveIdentityBinding(binding, targetPool = getPool()) {
     if (!HEDERA_ID_PATTERN.test(topicId)) throw new Error('topicId must be a Hedera account ID.');
 
     const result = await targetPool.query(
-        `INSERT INTO identity_bindings
+        `WITH displaced AS (
+             -- The same identity moving to a different settlement account.
+             -- Without this the insert would violate the unique index on
+             -- evm_address, or worse, leave the old row in place and appear to
+             -- succeed. Delete first so the relation is genuinely 1:1.
+             DELETE FROM identity_bindings
+             WHERE evm_address = $1 AND hedera_account_id <> $3
+         )
+         INSERT INTO identity_bindings
             (evm_address, evm_chain_id, hedera_account_id, topic_id, sequence_number, consensus_timestamp)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (hedera_account_id) DO UPDATE

@@ -135,50 +135,66 @@ test('the gateway can attest a reading and the API returns settlement instructio
 test('energy is only released when the reported HTS transaction really credited the prosumer', () => {
     const prosumer = '0.0.12345';
     const units = 1250;
-    const transfer = (account, tinybars) => ({
+    // The credit must be in the energy token. HBAR legs carry no tokenId and
+    // are scaled in tinybar, so a transfer that omits it is not evidence of a
+    // token credit.
+    const token = '0.0.6241546';
+    const transfer = (account, tinybars, tokenId = token) => ({
         accountId: { toString: () => account },
         amount: { toTinybars: () => String(tinybars) },
+        tokenId: tokenId ? { toString: () => tokenId } : null,
     });
 
     // Correct credit: the prosumer receives exactly the attested amount.
     assert.equal(
-        htsCreditError({ transfers: [transfer('0.0.55555', -units), transfer(prosumer, units)] }, prosumer, units),
+        htsCreditError({ transfers: [transfer('0.0.55555', -units), transfer(prosumer, units)] }, prosumer, units, token),
         null,
+    );
+
+    // A plain HBAR payment of the same size is not a token credit.
+    assert.match(
+        htsCreditError(
+            { transfers: [transfer('0.0.55555', -units, null), transfer(prosumer, units, null)] },
+            prosumer,
+            units,
+            token,
+        ),
+        /HBAR, not in energy tokens/,
     );
 
     // Nothing moved to the prosumer.
     assert.match(
-        htsCreditError({ transfers: [] }, prosumer, units),
-        /does not credit the prosumer at all/,
+        htsCreditError({ transfers: [] }, prosumer, units, token),
+        /does not credit the prosumer/,
     );
 
     // Only the gateway was debited, with no matching credit.
     assert.match(
-        htsCreditError({ transfers: [transfer('0.0.55555', -units)] }, prosumer, units),
-        /does not credit the prosumer at all/,
+        htsCreditError({ transfers: [transfer('0.0.55555', -units)] }, prosumer, units, token),
+        /does not credit the prosumer/,
     );
 
     // A short credit must not pass as a full one.
     assert.match(
-        htsCreditError({ transfers: [transfer('0.0.55555', -999), transfer(prosumer, 999)] }, prosumer, units),
+        htsCreditError({ transfers: [transfer('0.0.55555', -999), transfer(prosumer, 999)] }, prosumer, units, token),
         /credits a different amount/,
     );
 
     // Crediting somebody else must not satisfy the check.
     assert.match(
-        htsCreditError({ transfers: [transfer('0.0.55555', -units), transfer('0.0.99999', units)] }, prosumer, units),
-        /does not credit the prosumer at all/,
+        htsCreditError({ transfers: [transfer('0.0.55555', -units), transfer('0.0.99999', units)] }, prosumer, units, token),
+        /does not credit the prosumer/,
     );
 
     // A prosumuer paying out (negative delta) is not a credit.
     assert.match(
-        htsCreditError({ transfers: [transfer(prosumer, -units)] }, prosumer, units),
-        /does not credit the prosumer at all/,
+        htsCreditError({ transfers: [transfer(prosumer, -units)] }, prosumer, units, token),
+        /does not credit the prosumer/,
     );
 
     // A malformed record must fail closed rather than throw.
-    assert.ok(htsCreditError(null, prosumer, units));
-    assert.ok(htsCreditError({}, prosumer, units));
+    assert.ok(htsCreditError(null, prosumer, units, token));
+    assert.ok(htsCreditError({}, prosumer, units, token));
 });
 
 test('the settlement endpoint rejects incomplete reports and mismatched re-reports', async () => {

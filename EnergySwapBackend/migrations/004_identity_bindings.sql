@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS identity_bindings (
 -- Lookups run in both directions: "what may this EVM wallet trade?" on every
 -- authenticated request, and "is this Hedera account already bound?" when
 -- issuing a nonce.
+--
+-- A plain index, not UNIQUE. Enforcing one-to-one is added in migration 005,
+-- which is where the dedupe step lives - CREATE UNIQUE INDEX fails outright if
+-- duplicates already exist, so it cannot simply be retrofitted here.
 CREATE INDEX IF NOT EXISTS identity_bindings_evm_idx ON identity_bindings (evm_address);
 
 -- Evidence columns are kept for audit. They are deliberately NOT used to

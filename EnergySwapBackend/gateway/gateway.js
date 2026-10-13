@@ -74,9 +74,17 @@ function appendJournal(entry) {
     fs.appendFileSync(JOURNAL_PATH, `${JSON.stringify(entry)}\n`, 'utf8');
 }
 
+/**
+ * Read the journal, collapsing updates to a single entry per reading.
+ *
+ * The journal is append-only, so a reading that was re-appended after its
+ * transaction IDs were known appears twice. The later line is authoritative -
+ * it is the more complete record - so entries are keyed by readingId with the
+ * last occurrence winning.
+ */
 function readJournal() {
     if (!fs.existsSync(JOURNAL_PATH)) return [];
-    return fs
+    const entries = fs
         .readFileSync(JOURNAL_PATH, 'utf8')
         .split('\n')
         .filter(Boolean)
@@ -88,12 +96,26 @@ function readJournal() {
             }
         })
         .filter(Boolean);
+
+    const byReading = new Map();
+    for (const entry of entries) {
+        if (!entry || typeof entry.readingId !== 'string') continue;
+        byReading.set(entry.readingId, entry);
+    }
+    return [...byReading.values()];
 }
 
-/** Rewrite the journal keeping only the entries still awaiting settlement. */
+/**
+ * Rewrite the journal keeping only the entries still awaiting settlement.
+ *
+ * Written to a temp file and renamed, so a crash mid-write cannot leave the
+ * journal truncated and destroy pending entries for other readings.
+ */
 function compactJournal(keep) {
     const lines = keep.map((entry) => JSON.stringify(entry)).join('\n');
-    fs.writeFileSync(JOURNAL_PATH, lines ? `${lines}\n` : '', 'utf8');
+    const temp = `${JOURNAL_PATH}.tmp`;
+    fs.writeFileSync(temp, lines ? `${lines}\n` : '', 'utf8');
+    fs.renameSync(temp, JOURNAL_PATH);
 }
 
 async function apiPost(pathname, body) {
@@ -176,6 +198,13 @@ async function submitReading(config, client, reading) {
     const ids = await settleOnChain(config, client, reading.readingId, settlement);
     journalEntry.hcsTransactionId = ids.hcsTransactionId;
     journalEntry.htsTransactionId = ids.htsTransactionId;
+
+    // Persist the transaction IDs before reporting them. Mutating the in-memory
+    // object is not enough: the on-disk entry still holds nulls, and the
+    // compactJournal call below re-reads from disk and deletes the entry. A
+    // crash after settleOnChain but before the API call would therefore lose the
+    // only pointer to energy that had already been credited on chain.
+    appendJournal(journalEntry);
 
     await apiPost(`/api/oracle/readings/${reading.readingId}/settlement`, ids);
     compactJournal(readJournal().filter((entry) => entry.readingId !== reading.readingId));
