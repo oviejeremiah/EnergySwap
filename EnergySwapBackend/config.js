@@ -1,6 +1,8 @@
 const { createPublicKey } = require('node:crypto');
 
-const DEFAULT_CORS_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
+// The dev frontend runs on Vite's configured port (see vite.config.js). This
+// list must match it or every API call fails CORS in the browser.
+const DEFAULT_CORS_ORIGINS = ['http://localhost:4300', 'http://127.0.0.1:4300'];
 
 function parsePort(value) {
     const port = Number(value);
@@ -50,6 +52,44 @@ function validateDatabaseUrl(databaseUrl) {
     }
 }
 
+function parseServiceUrl(value, name, nodeEnv, { allowPath = true } = {}) {
+    if (!value) return '';
+    let parsed;
+    try {
+        parsed = new URL(value);
+    } catch {
+        throw new Error(`${name} must be a valid HTTP(S) URL.`);
+    }
+    if (
+        !['https:', 'http:'].includes(parsed.protocol) ||
+        (nodeEnv === 'production' && parsed.protocol !== 'https:') ||
+        parsed.username ||
+        parsed.password ||
+        parsed.search ||
+        parsed.hash ||
+        (!allowPath && parsed.pathname !== '/')
+    ) {
+        throw new Error(`${name} must be an HTTPS URL in production without credentials, query, or fragment.`);
+    }
+    return parsed.toString().replace(/\/$/, '');
+}
+
+function parseConfirmations(value, name, defaultValue) {
+    const confirmations = Number(value || defaultValue);
+    if (!Number.isInteger(confirmations) || confirmations < 1 || confirmations > 1000) {
+        throw new Error(`${name} must be an integer between 1 and 1000.`);
+    }
+    return confirmations;
+}
+
+function parsePositiveInt(value, name, defaultValue) {
+    const parsed = Number(value || defaultValue);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 86_400_000) {
+        throw new Error(`${name} must be an integer of milliseconds between 1 and 86400000.`);
+    }
+    return parsed;
+}
+
 function loadConfig(env = process.env) {
     const nodeEnv = env.NODE_ENV || 'development';
     if (!['development', 'test', 'production'].includes(nodeEnv)) {
@@ -61,19 +101,27 @@ function loadConfig(env = process.env) {
         throw new Error('This release is Testnet-only. Mainnet is intentionally disabled.');
     }
 
+    // OPERATOR_ID/OPERATOR_KEY are legacy. Chain writes for meter evidence are
+    // now performed by the meter gateway with its own key, so the platform no
+    // longer holds a signing identity. The pair must still agree if present.
+    //
+    // The scripts that used to consume these moved to legacy-operator/ on
+    // 2026-10-12. Nothing in the running API reads them any more. The key is
+    // reserved for the future grid metering service and should be removed from
+    // .env once that service owns a credential of its own.
     const hasOperatorId = Boolean(env.OPERATOR_ID);
     const hasOperatorKey = Boolean(env.OPERATOR_KEY);
     if (hasOperatorId !== hasOperatorKey) {
         throw new Error('OPERATOR_ID and OPERATOR_KEY must be configured together.');
     }
-    if (nodeEnv === 'production' && (!hasOperatorId || !env.HCS_TOPIC_ID || !env.ENERGY_TOKEN_ID)) {
-        throw new Error('Production Testnet deployments require operator, HCS topic, and energy token configuration.');
+    if (nodeEnv === 'production' && (!env.HCS_TOPIC_ID || !env.ENERGY_TOKEN_ID)) {
+        throw new Error('Production Testnet deployments require HCS topic and energy token configuration.');
     }
     if (Boolean(env.HCS_TOPIC_ID) !== Boolean(env.ENERGY_TOKEN_ID)) {
         throw new Error('HCS_TOPIC_ID and ENERGY_TOKEN_ID must be configured together.');
     }
-    if (env.METER_ORACLE_PUBLIC_KEY && (!hasOperatorId || !env.HCS_TOPIC_ID || !env.ENERGY_TOKEN_ID)) {
-        throw new Error('METER_ORACLE_PUBLIC_KEY requires operator, HCS topic, and energy token configuration.');
+    if (env.METER_ORACLE_PUBLIC_KEY && (!env.HCS_TOPIC_ID || !env.ENERGY_TOKEN_ID)) {
+        throw new Error('METER_ORACLE_PUBLIC_KEY requires HCS topic and energy token configuration.');
     }
     if (env.METER_ORACLE_PUBLIC_KEY) {
         try {
@@ -106,6 +154,38 @@ function loadConfig(env = process.env) {
         hcsTopicId: env.HCS_TOPIC_ID || '',
         energyTokenId: env.ENERGY_TOKEN_ID || '',
         meterOraclePublicKey: env.METER_ORACLE_PUBLIC_KEY || '',
+        // When enabled, /api/post-offer requires the caller to prove control of
+        // the prosumer account by signing a server-issued challenge. Off by
+        // default so existing flows keep working; turn on in production.
+        requireWalletSignature: env.REQUIRE_WALLET_SIGNATURE === 'true',
+        hederaMirrorNodeUrl: parseServiceUrl(
+            env.HEDERA_MIRROR_NODE_URL || 'https://testnet.mirrornode.hedera.com',
+            'HEDERA_MIRROR_NODE_URL',
+            nodeEnv,
+        ),
+        walletSignatureMaxAgeMs: parsePositiveInt(
+            env.WALLET_SIGNATURE_MAX_AGE_MS,
+            'WALLET_SIGNATURE_MAX_AGE_MS',
+            300000,
+        ),
+        ethereumSepoliaRpcUrl: parseServiceUrl(
+            env.ETHEREUM_SEPOLIA_RPC_URL || '',
+            'ETHEREUM_SEPOLIA_RPC_URL',
+            nodeEnv,
+            { allowPath: true },
+        ),
+        bitcoinTestnetApiUrl: parseServiceUrl(
+            env.BITCOIN_TESTNET_API_URL || '',
+            'BITCOIN_TESTNET_API_URL',
+            nodeEnv,
+            { allowPath: true },
+        ),
+        ethereumMinConfirmations: parseConfirmations(
+            env.ETHEREUM_MIN_CONFIRMATIONS,
+            'ETHEREUM_MIN_CONFIRMATIONS',
+            1,
+        ),
+        bitcoinMinConfirmations: parseConfirmations(env.BITCOIN_MIN_CONFIRMATIONS, 'BITCOIN_MIN_CONFIRMATIONS', 1),
     });
 }
 

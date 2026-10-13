@@ -6,6 +6,7 @@
     "start": "npm run dev",
     "dev": "concurrently -n backend,frontend -c cyan,magenta \"npm --prefix EnergySwapBackend run start\" \"npm --prefix EnergySwapFrontend run dev -- --host 0.0.0.0\"",
     "backend": "npm --prefix EnergySwapBackend run start",
+    "backend:watch": "npm --prefix EnergySwapBackend run dev",
     "frontend": "npm --prefix EnergySwapFrontend run dev -- --host 0.0.0.0",
     "test": "npm --prefix EnergySwapBackend test",
     "build": "npm --prefix EnergySwapFrontend run build"

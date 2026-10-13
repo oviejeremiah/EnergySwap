@@ -69,8 +69,10 @@ scripts, and backend tests.
 - `package.json` — backend scripts, runtime requirements, and direct
   dependencies.
 - `package-lock.json` — exact backend dependency resolution.
-- `priceService.js` — cached HBAR/USD price lookup with a clearly documented
-  prototype fallback.
+- `priceService.js` — cached USD price lookup for the supported market pairs,
+  plus OHLC history for the chart timeframe selector, with a clearly documented
+  prototype fallback. `getHbarPrice()` is the settlement input and is guaranteed
+  to resolve to a positive number.
 - `repository.js` — PostgreSQL repository for offers, trades, and meter
   readings, including transactional trade recording and replay reservations.
 - `server.js` — Express API routes, health checks, offer/trade workflows,
@@ -132,7 +134,10 @@ Static assets copied directly to the frontend build output.
 - `javascript.svg` — JavaScript starter-template illustration.
 - `main.js` — main browser application: wallet connection, roles, offer and
   trade interactions, API calls, and dashboard/news rendering.
-- `style.css` — application layout, responsive styling, and visual states.
+
+All styling lives in the `<style>` block inside `index.html`, next to the markup
+it targets. There is no separate stylesheet; the earlier `src/style.css` was an
+unreferenced light-theme leftover from the Vite starter and has been removed.
 
 ## Generated and local-only files
 

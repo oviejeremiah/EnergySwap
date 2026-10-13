@@ -1,14 +1,27 @@
 // EnergySwap · main.js
 // Web3-native: Wallet Address IS the User Identity
 
-import {
-    DAppConnector,
-    HederaJsonRpcMethod,
-    HederaSessionEvent,
-    HederaChainId,
-} from '@hashgraph/hedera-wallet-connect';
+// Loaded on demand — see loadHederaConnector below.
+let _hederaModule = null;
+
+/**
+ * Import the Hedera connector only when a settlement account is actually wanted.
+ *
+ * Importing it eagerly is not harmless. The package configures WalletConnect's
+ * explorer chain scope to `hedera:testnet` as a side effect of module evaluation.
+ * With a static import that ran before any user interaction, the WalletConnect
+ * wallet catalogue resolved Hedera wallets only — so the identity modal rendered
+ * an empty container, because identity pairs over EVM chains.
+ *
+ * @returns {Promise<typeof import('@hashgraph/hedera-wallet-connect')>}
+ */
+const loadHederaConnector = async () => {
+    if (!_hederaModule) _hederaModule = await import('@hashgraph/hedera-wallet-connect');
+    return _hederaModule;
+};
 import { Client, Hbar, LedgerId, TransactionId, TransferTransaction } from '@hiero-ledger/sdk';
 import 'websocket-polyfill';
+import { connectViaWalletConnect, watchSession } from './wallet-connect.js';
 
 if (typeof window.global === 'undefined') {
     window.global = window;
@@ -23,6 +36,11 @@ if (typeof window.Buffer === 'undefined') {
 }
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:3000';
+
+// index.html is not processed by Vite, so its inline script cannot read
+// import.meta.env. Publish the resolved base for it to pick up. Set at module
+// scope so it exists before the inline script's DOMContentLoaded handler runs.
+window.__ENERGYSWAP_API_BASE__ = BACKEND_URL;
 const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3bb8070d3c128e28471c850ee21f3978';
 const HASHPACK_INSTALL_URL = 'https://www.hashpack.app/';
 
@@ -33,17 +51,31 @@ const appMetadata = {
     url: window.location.origin,
 };
 
-// ─── STATE ────────────────────────────────────────────────────────────────
+// ────────────────────────── STATE ─────────────────────────────
 let dAppConnector = null;
 let isInitialized = false;
 let connectedAccountId = null;
 let selectedRole = null; // 'prosumer' | 'consumer'
+
+// — Identity vs settlement —
+// Two deliberately separate things:
+//
+//   identitySession  Any EVM wallet (extension or phone). Proves who the user
+//                    is. Should hold no HBAR — that is the whole point, so a
+//                    compromised login wallet yields nothing.
+//   connectedAccountId  The Hedera account that actually settles. Needed only
+//                    to post an offer or buy energy.
+//
+// A user may hold only the first, only the second, or both. Neither implies
+// the other, and neither is treated as proof of the other.
+let identitySession = null;
+let stopWatchingIdentity = null;
 let offers = [];
 let selectedOffer = null;
 let hbarPriceUSD = null;
 const NETWORK_FEE_ESTIMATE_HBAR = 0.0001;
 
-// ─── DOM REFS ─────────────────────────────────────────────────────────────
+// ───────────────────────── DOM REFS ───────────────────────────
 let accountInfoDiv,
     accountIdSpan,
     consumerView,
@@ -61,7 +93,7 @@ let accountInfoDiv,
     dashboardScreen,
     roleBadge;
 
-// ─── STATUS ───────────────────────────────────────────────────────────────
+// ────────────────────────── STATUS ────────────────────────────
 const setStatus = (message, isError = false) => {
     [statusDiv, document.getElementById('role-status')].forEach((el) => {
         if (!el) return;
@@ -73,7 +105,7 @@ const setStatus = (message, isError = false) => {
     });
 };
 
-// ─── HBAR PRICE ───────────────────────────────────────────────────────────
+// ──────────────────────── HBAR PRICE ──────────────────────────
 const fetchHbarPrice = async () => {
     try {
         const res = await fetch(`${BACKEND_URL}/api/hbar-price`);
@@ -107,12 +139,22 @@ const fetchHbarPrice = async () => {
     }
 };
 
-// ─── STATS BAR ────────────────────────────────────────────────────────────
+// ──────────────────────── STATS BAR ───────────────────────────
+/**
+ * Write a value into an element by id.
+ *
+ * `extraClass` marks the value as an explicit "not available yet" state so it
+ * renders muted, rather than showing a bare placeholder glyph that reads like a
+ * broken page.
+ */
+const setEl = (id, val, extraClass) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = val;
+    el.classList.toggle('is-empty', Boolean(extraClass));
+};
+
 const updateStats = (offersData, tradesData) => {
-    const setEl = (id, val) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = val;
-    };
     setEl('stat-offers', offersData ? offersData.length : 0);
     setEl('stat-trades', tradesData ? tradesData.length : 0);
     if (tradesData && tradesData.length > 0) {
@@ -123,32 +165,106 @@ const updateStats = (offersData, tradesData) => {
     }
 };
 
-// ─── IDENTITY BAR ─────────────────────────────────────────────────────────
+// ─────────────────────── IDENTITY BAR ─────────────────────────
+//
+// Shows the two wallets as the separate things they are. The settlement
+// address gets a HashScan link because it is a real Hedera account; the
+// identity address does not, because an EVM address has nothing on Hedera to
+// look up and linking it there would be misleading.
+
+const shortAddress = (value) =>
+    typeof value === 'string' && value.length > 12
+        ? `${value.slice(0, 6)}…${value.slice(-4)}`
+        : value;
+
 const updateIdentityBars = () => {
-    if (!connectedAccountId) return;
+    const hasHedera = isHederaAccount(connectedAccountId);
+    const hasIdentity = Boolean(identitySession?.address);
 
-    const consumerAddr = document.getElementById('consumer-wallet-display');
+    // Writes an address field, or an explicit reason when there is nothing to
+    // show. A bare placeholder glyph is avoided everywhere: it reads as a
+    // rendering fault rather than as "this is intentionally absent", and it
+    // leaves the user guessing which of the two wallets is missing.
+    const setAddr = (el, value, missingText) => {
+        if (!el) return;
+        const empty = !value;
+        el.textContent = empty ? missingText : value;
+        el.classList.toggle('is-empty', empty);
+        el.classList.toggle('is-hidden', value === null);
+    };
+
+    if (!hasHedera && !hasIdentity) {
+        // Signed in with neither wallet: say so rather than leaving stale values.
+        for (const id of ['consumer-wallet-display', 'prosumer-wallet-display', 'prosumer-id-display']) {
+            setAddr(document.getElementById(id), null, 'Not connected');
+        }
+        setAddr(document.getElementById('account-id'), null, 'No wallet connected');
+        return;
+    }
+
+    // Settlement address. Only meaningful once a Hedera account exists; an
+    // EVM-only signer has none, and saying which is missing beats a placeholder.
+    const settlementText = hasHedera ? connectedAccountId : 'No Hedera account connected';
+    setAddr(document.getElementById('consumer-wallet-display'), hasHedera ? connectedAccountId : null, settlementText);
+    setAddr(document.getElementById('prosumer-wallet-display'), hasHedera ? connectedAccountId : null, settlementText);
+    setAddr(document.getElementById('prosumer-id-display'), hasHedera ? connectedAccountId : null, settlementText);
+    setAddr(accountIdSpan, hasHedera ? connectedAccountId : null, settlementText);
+
     const consumerLink = document.getElementById('consumer-hashscan-link');
-    if (consumerAddr) consumerAddr.textContent = connectedAccountId;
-    if (consumerLink) consumerLink.href = `https://hashscan.io/testnet/account/${connectedAccountId}`;
-
-    const prosumerAddr = document.getElementById('prosumer-wallet-display');
     const prosumerLink = document.getElementById('prosumer-hashscan-link');
-    if (prosumerAddr) prosumerAddr.textContent = connectedAccountId;
-    if (prosumerLink) prosumerLink.href = `https://hashscan.io/testnet/account/${connectedAccountId}`;
+    if (consumerLink) consumerLink.classList.toggle('is-hidden', !hasHedera);
+    if (prosumerLink) prosumerLink.classList.toggle('is-hidden', !hasHedera);
+    if (hasHedera) {
+        if (consumerLink) consumerLink.href = `https://hashscan.io/testnet/account/${connectedAccountId}`;
+        if (prosumerLink) prosumerLink.href = `https://hashscan.io/testnet/account/${connectedAccountId}`;
+    }
 
-    const legacy = document.getElementById('prosumer-id-display');
-    if (legacy) legacy.textContent = connectedAccountId;
+    const identityAddr = document.getElementById('identity-wallet-display');
+    if (identityAddr) identityAddr.textContent = hasIdentity ? identitySession.address : 'Not connected';
 
-    if (accountIdSpan) accountIdSpan.textContent = connectedAccountId;
+    // Header chip: the sign-in wallet sits on its own line beneath the settlement
+    // address so both are visible at once and it is obvious they are different
+    // wallets. No HashScan link here — an EVM address has no Hedera account.
+    const headerIdentity = document.getElementById('identity-account-id');
+    const headerIdentityLabel = document.getElementById('identity-wallet-label');
+    if (headerIdentity) {
+        headerIdentity.textContent = hasIdentity ? identitySession.address : 'Not connected';
+        headerIdentity.classList.toggle('is-empty', !hasIdentity);
+        headerIdentity.classList.toggle('is-hidden', !hasIdentity);
+    }
+    if (headerIdentityLabel) {
+        headerIdentityLabel.textContent = hasIdentity ? `Sign-in · ${identitySession.name}` : 'Sign-in wallet';
+        headerIdentityLabel.classList.toggle('is-hidden', !hasIdentity);
+    }
 
-    const walletRoleLabel = document.getElementById('wallet-role-label');
-    if (walletRoleLabel) {
-        walletRoleLabel.textContent = selectedRole === 'prosumer' ? 'Prosumer' : 'Consumer';
+    // Role identity bars: mirror the sign-in wallet under the settlement address
+    // so it reads the same way in the card as it does in the header.
+    for (const id of ['consumer-signin-display', 'prosumer-signin-display']) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        el.textContent = hasIdentity ? `Sign-in · ${identitySession.address}` : 'Sign-in wallet not connected';
+        el.classList.toggle('is-hidden', !hasIdentity);
+    }
+
+    const roleLabel = document.getElementById('wallet-role-label');
+    if (roleLabel) {
+        if (!hasHedera) {
+            // Signed in but cannot settle. Say exactly that rather than
+            // implying a trading role the wallet cannot use.
+            roleLabel.textContent = hasIdentity
+                ? 'Browsing only — connect a Hedera account to trade'
+                : 'No trading wallet connected';
+        } else {
+            roleLabel.textContent =
+                selectedRole === 'prosumer' ? 'Prosumer' : 'Consumer';
+        }
+        roleLabel.title = hasIdentity
+            ? `Identity: ${identitySession.name} ${shortAddress(identitySession.address)}`
+            : '';
     }
 };
 
-// ─── CHART ENGINE ─────────────────────────────────────────────────────────
+// ─────────────────────── CHART ENGINE ─────────────────────────
 const chartAnimations = {};
 
 function generateCandles(tradesData, days) {
@@ -335,6 +451,15 @@ function drawCandleChart(canvasId, candles, summaryIds) {
     }
 }
 
+/**
+ * True when the OS asks for reduced motion.
+ *
+ * CSS `@media (prefers-reduced-motion: reduce)` already freezes the stylesheet
+ * animations, but it cannot stop JavaScript that redraws a canvas on a timer.
+ * Every JS-driven loop must check this itself (WCAG 2.3.3).
+ */
+const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 const renderChart = (tradesData) => {
     const days = [];
     for (let i = 6; i >= 0; i--) {
@@ -355,6 +480,9 @@ const renderChart = (tradesData) => {
     });
     clearInterval(chartAnimations.interval);
     chartAnimations.candles = candles;
+    // The random price drift is decorative motion: skip the redraw loop
+    // entirely under reduced motion. The chart above still renders once.
+    if (prefersReducedMotion()) return;
     chartAnimations.interval = setInterval(() => {
         const last = chartAnimations.candles[chartAnimations.candles.length - 1];
         if (last && last.hasData) {
@@ -368,7 +496,7 @@ const renderChart = (tradesData) => {
     }, 2000);
 };
 
-// ─── NAVIGATION ───────────────────────────────────────────────────────────
+// ──────────────────────── NAVIGATION ──────────────────────────
 const showRoleSelection = () => {
     if (roleSelectionScreen) roleSelectionScreen.classList.remove('hidden');
     if (dashboardScreen) dashboardScreen.classList.add('hidden');
@@ -377,7 +505,35 @@ const showRoleSelection = () => {
     connectedAccountId = null;
 };
 
+/**
+ * True when the connected address is a canonical Hedera account ID.
+ *
+ * EnergySwap settles in HBAR, so only Hedera accounts may post or purchase.
+ * The API enforces this too (isHederaAccountId in server.js); doing it here
+ * lets the UI explain the rule immediately instead of surfacing a raw 400
+ * after the user has filled in the whole form.
+ */
+const isHederaAccount = (value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value.trim());
+
+/** User-facing explanation shown when a non-Hedera wallet connects. */
+const NON_HEDERA_MESSAGE =
+    `Your wallet address is not a Hedera account. EnergySwap settles in HBAR on the Hedera network, ` +
+    `so you can browse the marketplace but cannot post offers or buy energy yet. ` +
+    `Swap your ETH, BTC or other token into HBAR and connect with a Hedera account (for example 0.0.1234) to trade.`;
+
 const showDashboard = () => {
+    // Entry requires an identity: either a Hedera account (which settles) or an
+    // any-wallet identity session (which does not). An EVM-only user gets in
+    // and can browse; the trading forms stay locked until a Hedera account is
+    // connected. Bouncing them out here would make the whole marketplace
+    // invisible to exactly the users the multichain upgrade is for.
+    if (!isHederaAccount(connectedAccountId) && !identitySession) {
+        setStatus(NON_HEDERA_MESSAGE, true);
+        selectedRole = null;
+        showRoleSelection();
+        return;
+    }
+
     if (roleSelectionScreen) roleSelectionScreen.classList.add('hidden');
     if (dashboardScreen) dashboardScreen.classList.remove('hidden');
 
@@ -387,6 +543,7 @@ const showDashboard = () => {
         if (roleBadge) {
             roleBadge.textContent = 'PROSUMER';
             roleBadge.className = 'role-chip prosumer';
+            roleBadge.title = '';
         }
         setTimeout(() => {
             if (typeof initMcCanvas !== 'undefined') initMcCanvas('prosumer');
@@ -397,6 +554,7 @@ const showDashboard = () => {
         if (roleBadge) {
             roleBadge.textContent = 'CONSUMER';
             roleBadge.className = 'role-chip consumer';
+            roleBadge.title = '';
         }
         setTimeout(() => {
             if (typeof initMcCanvas !== 'undefined') initMcCanvas('consumer');
@@ -408,29 +566,93 @@ const showDashboard = () => {
     if (accountInfoDiv) accountInfoDiv.classList.remove('hidden');
 };
 
-// ─── UI UPDATE ────────────────────────────────────────────────────────────
+/**
+ * Enable or disable the controls that require a Hedera settlement account.
+ *
+ * Signing in with any wallet grants browsing only. Posting an offer and
+ * executing a trade both settle HBAR, so they need a Hedera account. Without
+ * this the buttons looked live to a WalletConnect-only user and then failed on
+ * click, which reads as a broken app rather than a deliberate rule.
+ */
+const updateTradeGate = () => {
+    const canTrade = isHederaAccount(connectedAccountId);
+
+    const postBtn = document.querySelector('#offer-form button[type="submit"]');
+    if (postBtn) {
+        postBtn.disabled = !canTrade;
+        postBtn.title = canTrade ? '' : 'Connect a Hedera account to post an offer';
+        postBtn.textContent = canTrade ? 'Post Energy Offer to Hedera' : 'Hedera account required to post';
+    }
+
+    // Only override the trade button while no offer is chosen: selectOffer owns
+    // its label and enabled state once a selection exists.
+    if (confirmTradeBtn && !selectedOffer) {
+        confirmTradeBtn.disabled = !canTrade;
+        confirmTradeBtn.title = canTrade ? '' : 'Connect a Hedera account to buy energy';
+        confirmTradeBtn.textContent = canTrade ? 'Execute Trade' : 'Hedera account required to trade';
+    }
+
+    return canTrade;
+};
+
+// ──────────────────────── UI UPDATE ───────────────────────────
 const updateUI = async () => {
-    if (connectedAccountId && selectedRole) {
+    // Two independent ways to be "in": a Hedera settlement account, or an
+    // any-wallet identity. Either is enough to see the marketplace; only the
+    // first unlocks trading.
+    const canEnter = Boolean(selectedRole) && (Boolean(connectedAccountId) || Boolean(identitySession));
+
+    if (canEnter) {
         showDashboard();
-        setStatus(`Connected as ${selectedRole.toUpperCase()}: ${connectedAccountId}`, false);
+
+        if (isHederaAccount(connectedAccountId)) {
+            setStatus(`Connected as ${selectedRole.toUpperCase()}: ${connectedAccountId}`, false);
+        } else {
+            setStatus(
+                `Signed in as ${selectedRole} with ${identitySession.name} ` +
+                    `(${shortAddress(identitySession.address)}). Browsing only — connect a ` +
+                    `Hedera account with HBAR to post or buy energy.`,
+                false,
+            );
+        }
+
         await fetchAndRenderOffers();
         await fetchAndRenderTrades();
         if (selectedRole === 'prosumer') await fetchAndRenderMyOffers();
+        updateTradeGate();
     } else {
         showRoleSelection();
         updateStats([], []);
     }
 };
 
-// ─── WALLETCONNECT (DAppConnector) ────────────────────────────────────────
+// — WALLETCONNECT (DAppConnector) —
 let _wcInitPromise = null;
 
 const initializeWalletConnect = async () => {
     if (_wcInitPromise) return _wcInitPromise;
+
+    // WORKAROUND (third-party): @walletconnect/modal injects its overlay as
+    // `<div id="wcm-modal" role="alertdialog" aria-modal="true">` with no
+    // accessible name, which fails the axe "aria-dialog-name" rule and costs 4
+    // Lighthouse accessibility points. The node is created by the library at
+    // runtime, so it cannot be labelled in markup. Watch for it and give it a
+    // name once it exists. Safe to delete when WalletConnect fixes this
+    // upstream — it only sets an ARIA attribute and touches no behaviour.
+    const wcmNameObserver = new MutationObserver(() => {
+        const modal = document.getElementById('wcm-modal');
+        if (modal && !modal.getAttribute('aria-label')) {
+            modal.setAttribute('aria-label', 'Hedera wallet connection');
+        }
+    });
+    wcmNameObserver.observe(document.documentElement, { childList: true, subtree: true });
+
     _wcInitPromise = (async () => {
         if (isInitialized && dAppConnector) return;
         isInitialized = true;
         try {
+            const { DAppConnector, HederaJsonRpcMethod, HederaSessionEvent, HederaChainId } =
+                await loadHederaConnector();
             dAppConnector = new DAppConnector(
                 appMetadata,
                 LedgerId.TESTNET,
@@ -454,7 +676,13 @@ const initializeWalletConnect = async () => {
                 connectedAccountId = dAppConnector.signers[0].getAccountId().toString();
             }
 
-            showRoleSelection();
+            // Only fall back to the role screen if the user has not connected
+            // anything yet. Loading the Hedera connector is now asynchronous, so
+            // this can land *after* an any-wallet sign-in and would otherwise
+            // bounce the user back out of a dashboard they just entered.
+            if (!connectedAccountId && !identitySession) {
+                showRoleSelection();
+            }
         } catch (error) {
             console.error('WalletConnect init error:', error);
             setStatus(`Wallet setup error: ${error.message}`, true);
@@ -470,6 +698,81 @@ const initializeWalletConnect = async () => {
 
 const getHashPackInstallMessage = () => {
     return `HashPack is required for EnergySwap. Install the browser extension from <a href="${HASHPACK_INSTALL_URL}" target="_blank" rel="noopener noreferrer">HashPack</a>, create a Hedera testnet account, and then select your role again.`;
+};
+
+// — ANY-WALLET IDENTITY (extension or phone) —
+//
+// This is the sign-in path, and it is separate from the Hedera settlement path
+// above on purpose. Connecting here proves control of a key; it does not prove
+// control of any Hedera account and moves no funds.
+
+/** Message when the user rejects the wallet prompt — not a real failure. */
+const isUserRejection = (error) =>
+    error && (error.code === 4001 || /rejected|denied|cancell?ed/i.test(error.message || ''));
+
+/**
+ * Wire a freshly connected session into the UI.
+ *
+ * Kept separate from connecting so every transport (WalletConnect today) gets
+ * identical session handling: change tracking, disconnect, status text.
+ */
+const adoptIdentitySession = (session) => {
+    identitySession = session;
+    // The role is claimed here, on success, rather than before connecting.
+    // Connecting is asynchronous, and anything that resets the UI while the
+    // attempt is in flight — the lazily loaded Hedera connector calls
+    // showRoleSelection() when it finishes — would clear a role set too early
+    // and leave the user stranded on the role screen with a live session.
+    selectedRole = 'browsing';
+
+    stopWatchingIdentity?.();
+    stopWatchingIdentity = watchSession(identitySession, {
+        onAccountsChanged: (address) => {
+            if (!address) {
+                identitySession = null;
+                showRoleSelection();
+                return;
+            }
+            identitySession.address = address;
+            updateUI();
+        },
+        onDisconnect: () => {
+            identitySession = null;
+            showRoleSelection();
+            setStatus('Wallet disconnected.', false);
+        },
+    });
+
+    const short = `${identitySession.address.slice(0, 6)}…${identitySession.address.slice(-4)}`;
+    setStatus(
+        `Signed in with ${identitySession.name} (${short}). ` +
+            `This wallet only identifies you — it never holds your HBAR. ` +
+            `Connect a Hedera account to post or buy energy.`,
+        false,
+    );
+    updateUI();
+};
+
+/**
+ * Sign in with any wallet, via WalletConnect.
+ *
+ * Both the desktop and the phone entry points come through here. WalletConnect
+ * presents the wallet list on desktop (MetaMask, Trust, Coinbase, Rabby…) and
+ * a scannable barcode on a phone, so one transport covers every wallet the user
+ * might have instead of branching on what happens to be injected in the browser.
+ */
+
+/** Tear down the identity session, leaving any Hedera session untouched. */
+const disconnectIdentity = async () => {
+    stopWatchingIdentity?.();
+    stopWatchingIdentity = null;
+    try {
+        await identitySession?.disconnect();
+    } catch (error) {
+        console.error('Identity disconnect error:', error);
+    }
+    identitySession = null;
+    updateUI();
 };
 
 const connectWithRole = async (role) => {
@@ -521,7 +824,7 @@ const disconnectWallet = async () => {
     setStatus('Wallet disconnected. Please select your role to reconnect.', false);
 };
 
-// ─── FETCH OFFERS ─────────────────────────────────────────────────────────
+// ─────────────────────── FETCH OFFERS ─────────────────────────
 const fetchAndRenderOffers = async () => {
     try {
         let response = await fetch(`${BACKEND_URL}/api/offers`);
@@ -587,7 +890,7 @@ const fetchAndRenderOffers = async () => {
     }
 };
 
-// ─── FETCH MY OFFERS (PROSUMER) ───────────────────────────────────────────
+// ──────────────── FETCH MY OFFERS (PROSUMER) ──────────────────
 const fetchAndRenderMyOffers = async () => {
     const myOfferList = document.getElementById('my-offer-list');
     if (!myOfferList || !connectedAccountId) return;
@@ -616,7 +919,7 @@ const fetchAndRenderMyOffers = async () => {
                 <div class="my-offer ${offer.status}">
                     <div>
                         <div class="my-offer-kwh ${offer.status}">${Number(offer.energyAmountKWh).toFixed(2)} kWh</div>
-                        <div class="my-offer-meta">${offer.hbarPerKWh} HBAR/kWh &mdash; Total: ${offer.totalHbar}ℏ</div>
+                        <div class="my-offer-meta">${offer.hbarPerKWh} HBAR/kWh &mdash; Total: ${offer.totalHbar}——</div>
                         <div class="my-offer-date">Posted: ${date}</div>
                     </div>
                     <span class="status-pill ${offer.status}">${isAvailable ? 'Available' : 'Sold'}</span>
@@ -630,7 +933,7 @@ const fetchAndRenderMyOffers = async () => {
     }
 };
 
-// ─── FETCH TRADES ─────────────────────────────────────────────────────────
+// ─────────────────────── FETCH TRADES ─────────────────────────
 const fetchAndRenderTrades = async () => {
     try {
         const response = await fetch(`${BACKEND_URL}/api/trades`);
@@ -666,13 +969,16 @@ const fetchAndRenderTrades = async () => {
     }
 };
 
-// ─── TRADE CARD LOGIC ─────────────────────────────────────────────────────
+// ───────────────────── TRADE CARD LOGIC ───────────────────────
 const updateTradeCard = () => {
     const kwh = parseFloat(kwhReceiveInput?.value) || 0;
     if (!selectedOffer || kwh <= 0) {
         if (hbarInput) hbarInput.value = '';
         const totalEl = document.getElementById('tc-total');
-        if (totalEl) totalEl.textContent = '—';
+        if (totalEl) {
+            totalEl.textContent = 'Select an offer';
+            totalEl.classList.add('is-empty');
+        }
         return;
     }
     const hbar = kwh * selectedOffer.hbarPerKWh;
@@ -692,8 +998,12 @@ const selectOffer = (offerId) => {
     if (btn) btn.closest('.offer-item')?.classList.add('selected');
 
     if (confirmTradeBtn) {
-        confirmTradeBtn.disabled = false;
-        confirmTradeBtn.textContent = 'Execute Trade';
+        // Respect the settlement gate: selecting an offer must not re-enable a
+        // button that cannot work without a Hedera account.
+        const canTrade = isHederaAccount(connectedAccountId);
+        confirmTradeBtn.disabled = !canTrade;
+        confirmTradeBtn.textContent = canTrade ? 'Execute Trade' : 'Hedera account required to trade';
+        confirmTradeBtn.title = canTrade ? '' : 'Connect a Hedera account to buy energy';
     }
 
     const setEl = (id, val) => {
@@ -705,9 +1015,13 @@ const selectOffer = (offerId) => {
         'tc-rate',
         `${Number(selectedOffer.hbarPerKWh).toFixed(4)} HBAR / kWh ($${(selectedOffer.hbarPerKWh * (hbarPriceUSD || 0)).toFixed(4)} / kWh)`,
     );
-    setEl('tc-prosumer', selectedOffer.prosumerId || '—');
+    setEl(
+        'tc-prosumer',
+        selectedOffer ? selectedOffer.prosumerId : 'No offer selected',
+        selectedOffer ? '' : 'is-empty',
+    );
     setEl('tc-available', `${selectedOffer.energyAmountKWh} kWh`);
-    setEl('tc-total', '—');
+    setEl('tc-total', 'Enter an amount', 'is-empty');
 
     if (kwhReceiveInput) {
         kwhReceiveInput.max = selectedOffer.energyAmountKWh;
@@ -720,7 +1034,7 @@ const selectOffer = (offerId) => {
     updateTradeCard();
 };
 
-// ─── EXECUTE TRADE ────────────────────────────────────────────────────────
+// ────────────────────── EXECUTE TRADE ─────────────────────────
 const executeTrade = async () => {
     const energyAmountKWh = parseFloat(kwhReceiveInput?.value);
     if (
@@ -732,8 +1046,12 @@ const executeTrade = async () => {
         setStatus('Please select an offer and enter a kWh amount within the available energy.', true);
         return;
     }
-    if (!connectedAccountId) {
-        setStatus('Please connect your wallet first.', true);
+    if (!isHederaAccount(connectedAccountId)) {
+        setStatus(
+            'Trading settles in HBAR on Hedera, so it needs a Hedera account. ' +
+                'Connect one from the role screen to post an offer or buy energy.',
+            true,
+        );
         return;
     }
     if (confirmTradeBtn) {
@@ -807,7 +1125,7 @@ const executeTrade = async () => {
     }
 };
 
-// ─── NEWS SIDEBAR ─────────────────────────────────────────────────────────
+// ─────────────────────── NEWS SIDEBAR ─────────────────────────
 let currentNewsTab = 'blockchain';
 let newsCache = { blockchain: null, energy: null, tech: null, forex: null };
 
@@ -1040,16 +1358,37 @@ const fetchNews = async (tab) => {
 };
 
 const initNewsSidebar = () => {
-    document.querySelectorAll('.news-tab').forEach((tab) => {
-        tab.addEventListener('click', () => {
-            document.querySelectorAll('.news-tab').forEach((t) => t.classList.remove('active'));
-            tab.classList.add('active');
-            currentNewsTab = tab.dataset.tab;
-            newsCache[currentNewsTab]
-                ? renderNewsItems(newsCache[currentNewsTab], currentNewsTab)
-                : fetchNews(currentNewsTab);
+    const tabs = Array.from(document.querySelectorAll('.news-tab'));
+    tabs.forEach((tab, index) => {
+        // Roving tabindex: the tablist behaves as one stop in the tab order,
+        // then Left/Right arrows move between tabs (WAI-ARIA tabs pattern).
+        tab.tabIndex = tab.classList.contains('active') ? 0 : -1;
+        tab.addEventListener('click', () => selectNewsTab(index));
+        tab.addEventListener('keydown', (event) => {
+            const keys = { ArrowLeft: -1, ArrowRight: 1, Home: 'first', End: 'last' };
+            if (!(event.key in keys)) return;
+            event.preventDefault();
+            const move = keys[event.key];
+            let next;
+            if (move === 'first') next = 0;
+            else if (move === 'last') next = tabs.length - 1;
+            else next = (index + move + tabs.length) % tabs.length;
+            selectNewsTab(next);
+            tabs[next].focus();
         });
     });
+
+    function selectNewsTab(index) {
+        tabs.forEach((t, i) => {
+            const isActive = i === index;
+            t.classList.toggle('active', isActive);
+            t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            t.tabIndex = isActive ? 0 : -1;
+        });
+        currentNewsTab = tabs[index].dataset.tab;
+        newsCache[currentNewsTab] ? renderNewsItems(newsCache[currentNewsTab], currentNewsTab) : fetchNews(currentNewsTab);
+    }
+
     const btn = document.getElementById('news-refresh-btn');
     if (btn)
         btn.addEventListener('click', () => {
@@ -1066,7 +1405,7 @@ const initNewsSidebar = () => {
     }, 300000);
 };
 
-// ─── DOM READY ────────────────────────────────────────────────────────────
+// ──────────────────────── DOM READY ───────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     accountInfoDiv = document.getElementById('account-info');
     accountIdSpan = document.getElementById('account-id');
@@ -1091,6 +1430,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnD = document.getElementById('disconnect-btn');
     if (btnP) btnP.addEventListener('click', () => connectWithRole('prosumer'));
     if (btnC) btnC.addEventListener('click', () => connectWithRole('consumer'));
+
+    // Any-wallet sign-in. Extensions get their own button so the user can pick
+    // deliberately when several are installed; the phone path always goes
+    // through WalletConnect.
+    const btnAnyExt = document.getElementById('btn-connect-wallet');
+    const btnAnyOff = document.getElementById('btn-disconnect-identity');
+
+    // One entry point for every wallet. The WalletConnect modal owns the wallet
+    // list, the barcode and the deep links, so there is no desktop/phone split
+    // left for the user to reason about.
+    if (btnAnyExt) {
+        btnAnyExt.addEventListener('click', async () => {
+            setStatus('Opening WalletConnect — choose a wallet to sign in with.', false);
+            try {
+                adoptIdentitySession(await connectViaWalletConnect());
+            } catch (error) {
+                identitySession = null;
+                // Dismissing the modal is a normal outcome, not a failure, so it
+                // must not be dressed up as an error.
+                setStatus(
+                    isUserRejection(error) ? 'Wallet connection cancelled.' : `Could not connect wallet: ${error.message}`,
+                    !isUserRejection(error),
+                );
+            }
+        });
+    }
+
+    if (btnAnyOff) btnAnyOff.addEventListener('click', disconnectIdentity);
     if (btnD) btnD.addEventListener('click', disconnectWallet);
 
     // Offer list delegation
@@ -1151,7 +1518,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 setStatus('Offer posted successfully on Hedera.', false);
                 offerForm.reset();
                 document.getElementById('oc-total-val').textContent = '— HBAR';
-                document.getElementById('oc-usd-val').textContent = '—';
+                const usdEl = document.getElementById('oc-usd-val');
+                usdEl.textContent = 'Awaiting quote';
+                usdEl.classList.add('is-empty');
                 await fetchAndRenderOffers();
                 await fetchAndRenderMyOffers();
             } catch (error) {
@@ -1181,8 +1550,17 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(fetchHbarPrice, 300000);
 
     // Initialise
-    initializeWalletConnect();
+    //
+    // The Hedera connector is deliberately NOT initialised here. It
+    // initialises WalletConnect Core, which is a module-level singleton, and the
+    // identity layer needs that same singleton. Initialising both leaves the
+    // WalletConnect modal mounted but unable to render its wallet list.
+    // connectWithRole() initialises it on demand, when a settlement account is
+    // actually wanted.
     initNewsSidebar();
+    // Apply the settlement gate on first paint too, so the trading controls are
+    // never briefly interactive before a wallet state is known.
+    updateTradeGate();
 });
 
 function updateOfferEstimate() {
@@ -1194,6 +1572,15 @@ function updateOfferEstimate() {
     const usdEl = document.getElementById('oc-usd-val');
     const usdRateEl = document.getElementById('oc-rate-usd-val');
     if (totalEl) totalEl.textContent = total > 0 ? `${total.toFixed(4)} HBAR` : '— HBAR';
-    if (usdEl) usdEl.textContent = total > 0 && hbarPrice > 0 ? `$${(total * hbarPrice).toFixed(4)} USD` : '—';
-    if (usdRateEl) usdRateEl.textContent = rate > 0 && hbarPrice > 0 ? `$${(rate * hbarPrice).toFixed(4)} / kWh` : '—';
+    if (usdEl) {
+        const known = total > 0 && hbarPrice > 0;
+        usdEl.textContent = known ? `${(total * hbarPrice).toFixed(4)} USD` : 'Awaiting quote';
+        usdEl.classList.toggle('is-empty', !known);
+    }
+    if (usdRateEl) {
+        const known = rate > 0 && hbarPrice > 0;
+        usdRateEl.textContent = known ? `${(rate * hbarPrice).toFixed(4)} / kWh` : 'Awaiting quote';
+        usdRateEl.classList.toggle('is-empty', !known);
+    }
 }
+

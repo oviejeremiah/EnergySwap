@@ -11,12 +11,21 @@ coverage/
 !.env.example
 !**/.env.example
 
+# Meter gateway local state (settlement journal holds transaction identifiers)
+**/.settlement-journal.jsonl
+EnergySwapBackend/gateway/.settlement-journal.jsonl
+
 # Local data and database files
 db.json
 **/db.json
 *.sqlite
 *.sqlite3
 *.db
+
+# Security scanner output. Scan runs write logs and a SQLite agent-state file
+# (~1 MB per run) into the working tree. Never commit these.
+strix_runs/
+**/strix_runs/
 
 # Private keys, logs, and local output
 *.pem

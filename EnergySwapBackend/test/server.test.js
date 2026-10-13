@@ -104,20 +104,17 @@ test('API rejects oversized bodies and does not emit CORS access for an unknown 
     await request(app).post('/api/post-offer').set('Content-Type', 'application/json').send('[]').expect(400);
 });
 
-test('oracle credit failure is durably reserved and a retry cannot double-credit', async () => {
+test('a verified reading is reserved and handed to the gateway, and cannot be double-reserved', async () => {
     const repository = createFakeRepository();
     const priorRepository = app.locals.repository;
     const priorConfig = app.locals.config;
     const priorFactory = app.locals.createHederaClient;
-    const priorSubmit = app.locals.submitHcsMessage;
-    const priorCredit = app.locals.creditEnergyTokens;
     const priorConsensusTimestamp = app.locals.getHcsConsensusTimestamp;
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
     const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
-    const operatorKey = PrivateKey.generateED25519().toString();
     const reading = {
         schemaVersion: 2,
-        readingId: 'failure-recovery-1',
+        readingId: 'gateway-settle-1',
         meterId: 'meter-test-1',
         prosumerId: '0.0.12345',
         kwhGenerated: 15.75,
@@ -126,47 +123,64 @@ test('oracle credit failure is durably reserved and a retry cannot double-credit
         intervalConvention: '[start,end)',
     };
     const signature = sign(null, Buffer.from(canonicalizeReading(reading)), privateKey).toString('base64');
-    let creditsAttempted = 0;
-    let submittedHcsMessage;
+    let clientCreated = 0;
 
     app.locals.repository = repository;
     app.locals.config = {
         hederaNetwork: 'testnet',
         meterOraclePublicKey: publicKeyPem,
-        operatorId: '0.0.12345',
-        operatorKey,
         hcsTopicId: '0.0.12346',
         energyTokenId: '0.0.12347',
     };
-    app.locals.createHederaClient = () => ({
-        setOperator() {},
-        close() {},
-    });
-    app.locals.submitHcsMessage = async (_client, _topicId, message) => {
-        submittedHcsMessage = JSON.parse(message);
-        return { transactionId: { toString: () => '0.0.12346@1234.000000001' } };
+    // If the platform ever needs to sign to accept a reading, this fails the test.
+    app.locals.createHederaClient = () => {
+        clientCreated += 1;
+        return { close() {} };
     };
-    app.locals.creditEnergyTokens = async () => {
-        creditsAttempted += 1;
-        throw new Error('test settlement failure');
-    };
-    app.locals.getHcsConsensusTimestamp = async () => null;
     app.locals.getHcsConsensusTimestamp = async () => null;
 
     try {
-        await request(app).post('/api/oracle/readings').send({ reading, signature }).expect(502);
-        const saved = repository.readings.get(reading.readingId);
-        assert.equal(saved.status, 'credit_pending');
-        assert.match(saved.error, /reconciliation/);
-        assert.equal(submittedHcsMessage.readingId, reading.readingId);
-        assert.equal(submittedHcsMessage.intervalStart, reading.intervalStart);
-        assert.equal(submittedHcsMessage.intervalEnd, reading.intervalEnd);
-        assert.equal(submittedHcsMessage.prosumerId, reading.prosumerId);
-        assert.equal(submittedHcsMessage.signature, signature);
-        assert.equal(submittedHcsMessage.gatewayKeyFingerprint.length, 64);
+        const accepted = await request(app).post('/api/oracle/readings').send({ reading, signature }).expect(201);
+
+        // No chain client was needed: the platform holds no signing identity.
+        assert.equal(clientCreated, 0, 'accepting a reading must not open a Hedera client');
+        assert.equal(accepted.body.reading.status, 'hcs_pending');
+
+        // The gateway is told exactly what to submit, and pays its own fees.
+        const settlement = accepted.body.settlement;
+        assert.equal(settlement.hcs.topicId, '0.0.12346');
+        assert.equal(settlement.hts.tokenId, '0.0.12347');
+        assert.equal(settlement.hts.prosumerId, reading.prosumerId);
+        assert.equal(settlement.hts.tokenUnits, 1575);
+        assert.equal(settlement.reportTo, `/api/oracle/readings/${reading.readingId}/settlement`);
+
+        const hcsPayload = JSON.parse(settlement.hcs.message);
+        assert.equal(hcsPayload.readingId, reading.readingId);
+        assert.equal(hcsPayload.prosumerId, reading.prosumerId);
+        assert.equal(hcsPayload.signature, signature);
+        assert.equal(hcsPayload.gatewayKeyFingerprint.length, 64);
+
+        // Settling requires both transaction IDs.
+        await request(app)
+            .post(`/api/oracle/readings/${reading.readingId}/settlement`)
+            .send({ hcsTransactionId: '0.0.1@1.000000001' })
+            .expect(400);
+
+        // A second submission of the same reading is refused, so the gateway can
+        // never make the same energy count twice.
+        await request(app).post('/api/oracle/readings').send({ reading, signature }).expect(409);
+
+        // A different readingId claiming the same meter interval is refused.
+        const sameInterval = { ...reading, readingId: 'gateway-settle-2' };
+        const sameIntervalSig = sign(null, Buffer.from(canonicalizeReading(sameInterval)), privateKey).toString('base64');
+        const conflict = await request(app)
+            .post('/api/oracle/readings')
+            .send({ reading: sameInterval, signature: sameIntervalSig })
+            .expect(409);
+        assert.match(conflict.body.message, /interval already has an attestation/);
+
+        // Evidence remains publicly verifiable.
         const evidence = await request(app).get(`/api/oracle/readings/${reading.readingId}`).expect(200);
-        assert.equal(evidence.body.evidence.status, 'credit_pending');
-        assert.equal(evidence.body.evidence.hcs.transactionId, '0.0.12346@1234.000000001');
         assert.equal(
             verifyMeterReading(
                 evidence.body.evidence.reading,
@@ -175,35 +189,10 @@ test('oracle credit failure is durably reserved and a retry cannot double-credit
             ),
             true,
         );
-        await request(app).post('/api/oracle/readings').send({ reading, signature }).expect(409);
-        assert.equal(creditsAttempted, 1);
-
-        const secondInterval = {
-            ...reading,
-            readingId: 'failure-recovery-2',
-            intervalStart: new Date(Date.now() - 120_000).toISOString(),
-            intervalEnd: new Date(Date.now() - 60_000).toISOString(),
-        };
-        const secondSignature = sign(null, Buffer.from(canonicalizeReading(secondInterval)), privateKey).toString('base64');
-        await request(app).post('/api/oracle/readings').send({ reading: secondInterval, signature: secondSignature }).expect(502);
-        const differentIdSameInterval = { ...reading, readingId: 'duplicate-interval' };
-        const intervalSignature = sign(
-            null,
-            Buffer.from(canonicalizeReading(differentIdSameInterval)),
-            privateKey,
-        ).toString('base64');
-        const duplicateInterval = await request(app)
-            .post('/api/oracle/readings')
-            .send({ reading: differentIdSameInterval, signature: intervalSignature })
-            .expect(409);
-        assert.match(duplicateInterval.body.message, /interval already has an attestation/);
-        assert.equal(creditsAttempted, 2);
     } finally {
         app.locals.repository = priorRepository;
         app.locals.config = priorConfig;
         app.locals.createHederaClient = priorFactory;
-        app.locals.submitHcsMessage = priorSubmit;
-        app.locals.creditEnergyTokens = priorCredit;
         app.locals.getHcsConsensusTimestamp = priorConsensusTimestamp;
     }
 });

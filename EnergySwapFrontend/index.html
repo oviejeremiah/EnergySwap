@@ -5,6 +5,12 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>EnergySwap | P2P Energy Trading on Hedera</title>
+        <meta
+            name="description"
+            content="Buy and sell renewable energy peer-to-peer. Offers, settlement and meter evidence secured on the Hedera Hashgraph network."
+        />
+        <meta name="theme-color" content="#070b10" />
+        <meta name="color-scheme" content="dark" />
         <link
             href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Unbounded:wght@400;600;700;900&display=swap"
             rel="stylesheet"
@@ -43,11 +49,17 @@
                 --blue: #7ab8ff;
                 --purple: #b9a1ff;
 
-                /* Text */
-                --t-primary: #edf8ff;
-                --t-secondary: #b4c4d6;
-                --t-muted: #6d7d8d;
+                /* Text ramp — every step >= 4.5:1 on --void, --surface and
+                   the terminal background #050b14. Verified against WCAG 1.4.3. */
+                --t-primary: #edf8ff; /* 15.9:1 */
+                --t-secondary: #b4c4d6; /* 10.7:1 */
+                --t-muted: #9aa9b5; /*  6.3:1 */
+                --t-faint: #8494a0; /*  4.9:1 — smallest mono labels */
                 --t-accent: var(--accent);
+
+                /* Focus */
+                --focus-ring: 0 0 0 2px var(--void), 0 0 0 4px var(--accent);
+                --focus-ring-inset: inset 0 0 0 2px var(--accent);
 
                 /* Typography */
                 --font-display: 'Unbounded', sans-serif;
@@ -89,6 +101,89 @@
             button,
             input {
                 font-family: inherit;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           KEYBOARD FOCUS — visible for every interactive control
+        ═══════════════════════════════════════════════════ */
+            :focus-visible {
+                outline: 2px solid var(--accent);
+                outline-offset: 2px;
+                border-radius: 4px;
+            }
+            /* Controls that sit flush inside a panel get an inset ring so the
+               outline is never clipped by overflow:hidden ancestors. */
+            .tc-input-panel:focus-within,
+            .oc-group:focus-within,
+            .news-feed:focus-within,
+            #news-feed:focus-within {
+                outline: 2px solid var(--accent);
+                outline-offset: 1px;
+            }
+            .role-card:focus-within {
+                outline: 2px solid var(--accent);
+                outline-offset: 3px;
+            }
+            /* Never remove the ring for keyboard users; only suppress the
+               mouse-click ring that :focus-visible already handles. */
+            a:focus-visible,
+            button:focus-visible,
+            [tabindex]:focus-visible {
+                outline: 2px solid var(--accent);
+                outline-offset: 2px;
+            }
+
+            /* Pointer affordance for anything clickable. */
+            button:not(:disabled),
+            [role='button']:not([aria-disabled='true']),
+            .role-card,
+            .offer-item,
+            select {
+                cursor: pointer;
+            }
+            button:disabled {
+                cursor: not-allowed;
+            }
+
+            /* ═══════════════════════════════════════════════════
+           RESILIENT TEXT
+           Account IDs, token IDs and transaction hashes are long unbroken
+           runs. Let them break or shrink rather than force the layout wider.
+        ═══════════════════════════════════════════════════ */
+            .identity-address,
+            .wallet-addr,
+            .identity-address-sub,
+            .wallet-role,
+            .identity-hashscan-link,
+            .trade-link,
+            .trade-detail,
+            .prosumer-id,
+            .offer-seller,
+            .offer-time,
+            .posted-at,
+            .news-meta,
+            .mc-asset-sym,
+            .network-badge {
+                overflow-wrap: anywhere;
+            }
+            /* The header wallet chip must never widen the bar. */
+            .wallet-chip {
+                min-width: 0;
+                max-width: 100%;
+            }
+            .wallet-id-block {
+                min-width: 0;
+            }
+            .wallet-addr {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .identity-address {
+                /* Long account IDs shrink instead of overflowing the card. */
+                max-width: 100%;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
 
             /* ═══════════════════════════════════════════════════
@@ -164,6 +259,33 @@
                 to {
                     transform: translate(50px, 40px);
                 }
+            }
+
+            /* ═══════════════════════════════════════════════════
+           SKIP LINK — keyboard users bypass the decorative header
+        ═══════════════════════════════════════════════════ */
+            .skip-link {
+                position: absolute;
+                left: 12px;
+                top: -60px;
+                z-index: 10002;
+                background: var(--accent);
+                color: var(--void);
+                padding: 10px 16px;
+                border-radius: 8px;
+                font-family: var(--font-mono);
+                font-size: 12px;
+                font-weight: 700;
+                text-decoration: none;
+                transition: top 0.2s ease;
+            }
+            .skip-link:focus {
+                top: 12px;
+            }
+            /* Keyboard focus must never be hidden behind the sticky header. */
+            :target,
+            main:focus {
+                scroll-margin-top: 84px;
             }
 
             /* ═══════════════════════════════════════════════════
@@ -348,6 +470,41 @@
                 font-size: 13px;
                 font-weight: 600;
                 color: var(--accent);
+                word-break: break-all;
+            }
+
+            /* Sign-in wallet line. Same treatment as the settlement address so
+               both read as first-class, but muted so the Hedera account — the
+               one that actually settles — stays visually dominant. */
+            .wallet-addr-identity {
+                color: var(--blue);
+                font-weight: 500;
+                margin-top: 3px;
+            }
+            .wallet-role-sub {
+                font-size: 8px;
+                color: var(--t-faint);
+                margin-top: 1px;
+            }
+            .is-hidden {
+                display: none;
+            }
+
+            /* A value that is genuinely absent. Deliberately worded rather than a
+               bare placeholder glyph: a lone dash says nothing about *what* is
+               missing, so "Not connected" and "No Hedera account" are used
+               instead. Muted so it never competes with a real address. */
+            .is-empty {
+                color: var(--t-faint);
+                font-weight: 500;
+                font-style: italic;
+            }
+
+            /* Sign-in wallet line on the role identity bars. Same weight as the
+               other sub-lines so it does not compete with the settlement address. */
+            .identity-signin {
+                font-family: var(--font-mono);
+                word-break: break-all;
             }
 
             .role-chip {
@@ -368,6 +525,12 @@
                 background: rgba(96, 165, 250, 0.15);
                 color: var(--blue);
                 border: 1px solid rgba(96, 165, 250, 0.3);
+            }
+            /* Non-Hedera wallets keep browse access but cannot trade. */
+            .role-chip.viewonly {
+                background: rgba(244, 201, 93, 0.12);
+                color: var(--amber);
+                border: 1px solid rgba(244, 201, 93, 0.3);
             }
 
             .btn-disconnect {
@@ -552,7 +715,7 @@
                 border-right: 1px solid rgba(57, 255, 126, 0.08);
             }
             .t-sym {
-                color: rgba(255, 255, 255, 0.35);
+                color: var(--t-faint);
                 letter-spacing: 0.5px;
             }
             .t-px {
@@ -636,7 +799,7 @@
 
             .role-hero-sub {
                 font-size: 16px;
-                color: rgba(255, 255, 255, 0.4);
+                color: var(--t-secondary);
                 max-width: 460px;
                 margin: 0 auto 48px;
                 line-height: 1.7;
@@ -727,7 +890,7 @@
             }
             .role-card-desc {
                 font-size: 13px;
-                color: rgba(255, 255, 255, 0.4);
+                color: var(--t-secondary);
                 line-height: 1.6;
                 margin-bottom: 24px;
             }
@@ -775,10 +938,80 @@
                 transform: translateY(-1px);
             }
 
+            /* ── Any-wallet sign-in ───────────────────────────────────────────
+               Visually subordinate to the two role cards: signing in is a
+               browse-only convenience, not a trading path. Muted border and
+               monospace detail keep it from competing with the role CTAs. */
+            .wallet-any {
+                margin-top: 20px;
+                padding: 16px 18px;
+                border: 1px solid rgba(255, 255, 255, 0.09);
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.015);
+            }
+            .wallet-any-title {
+                margin: 0 0 6px;
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+                color: var(--t-muted);
+                font-family: var(--font-mono);
+            }
+            .wallet-any-desc {
+                margin: 0 0 12px;
+                font-size: 12.5px;
+                line-height: 1.55;
+                color: var(--t-muted);
+            }
+            .wallet-any-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            /* Buttons sit inline here, so they must not stretch to 100% the way
+               the stacked role-card buttons do. */
+            .wallet-any-actions .btn-role {
+                width: auto;
+                flex: 1 1 190px;
+                padding: 10px 14px;
+                font-size: 12px;
+                background: rgba(255, 255, 255, 0.03);
+                color: var(--t-faint);
+                border: 1.5px solid rgba(255, 255, 255, 0.12);
+            }
+            .wallet-any-actions .btn-role::after {
+                display: none;
+            }
+            .wallet-any-actions .btn-role:hover {
+                background: rgba(255, 255, 255, 0.06);
+                color: var(--t-muted);
+                border-color: rgba(255, 255, 255, 0.22);
+                transform: translateY(-1px);
+            }
+            .wallet-any-note {
+                display: flex;
+                gap: 8px;
+                align-items: baseline;
+                margin: 12px 0 0;
+                font-family: var(--font-mono);
+                font-size: 11px;
+            }
+            .wallet-any-label {
+                color: var(--t-faint);
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                flex-shrink: 0;
+            }
+            .wallet-any-value {
+                color: var(--t-muted);
+                word-break: break-all;
+            }
+
             .role-footnote {
                 margin-top: 28px;
                 font-size: 12px;
-                color: rgba(255, 255, 255, 0.18);
+                color: var(--t-faint);
                 font-family: var(--font-mono);
             }
 
@@ -788,7 +1021,10 @@
                 bottom: 24px;
                 left: 50%;
                 transform: translateX(-50%);
-                min-width: 380px;
+                /* Was a fixed min-width:380px, which spilled past a 375px
+                   viewport as soon as a message rendered. Clamp instead. */
+                width: min(380px, calc(100% - 32px));
+                min-width: 0;
             }
 
             /* ═══════════════════════════════════════════════════
@@ -863,17 +1099,7 @@
                 letter-spacing: -0.3px;
             }
 
-            .card-icon {
-                width: 30px;
-                height: 30px;
-                background: var(--accent-dim);
-                border: 1px solid var(--accent-border);
-                border-radius: 8px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 14px;
-            }
+            /* .card-icon was the badge beside "Execute Trade"; removed with the badge. */
 
             .energy-evidence-note {
                 margin-bottom: 18px;
@@ -989,6 +1215,9 @@
                 display: flex;
                 align-items: center;
                 gap: 4px;
+                /* Was 16px tall — far too small to hit reliably. */
+                min-height: 32px;
+                padding: 6px 2px;
                 transition: color 0.2s;
             }
             .identity-hashscan-link:hover {
@@ -1034,7 +1263,7 @@
             .terminal-label {
                 font-family: var(--font-mono);
                 font-size: 10px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
                 letter-spacing: 1px;
             }
             .terminal-net {
@@ -1066,7 +1295,7 @@
             .tc-rate-lbl {
                 font-family: var(--font-mono);
                 font-size: 8px;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
                 text-transform: uppercase;
                 margin-bottom: 3px;
@@ -1108,14 +1337,14 @@
             .tc-input-lbl {
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.3);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
                 text-transform: uppercase;
             }
             .tc-input-bal {
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
             }
             .tc-input-bal span {
                 color: rgba(57, 255, 126, 0.6);
@@ -1139,7 +1368,7 @@
                 color: #fff;
             }
             .tc-input-row input::placeholder {
-                color: rgba(255, 255, 255, 0.1);
+                color: var(--t-muted);
             }
             .tc-input-row input[readonly] {
                 color: rgba(57, 255, 126, 0.8);
@@ -1229,7 +1458,7 @@
             .tc-info-lbl {
                 font-family: var(--font-mono);
                 font-size: 10px;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
             }
             .tc-info-val {
                 font-family: var(--font-mono);
@@ -1279,7 +1508,9 @@
             }
             #confirm-trade-btn:disabled {
                 background: rgba(255, 255, 255, 0.05);
-                color: rgba(255, 255, 255, 0.2);
+                /* Disabled is exempt from 1.4.3, but an unreadable label hides
+                   why the button is unavailable. Keep it legible and muted. */
+                color: var(--t-muted);
                 cursor: not-allowed;
             }
 
@@ -1296,7 +1527,7 @@
                 gap: 4px;
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
             }
 
             /* ═══════════════════════════════════════════════════
@@ -1316,19 +1547,43 @@
                 display: flex;
                 align-items: center;
                 gap: 5px;
-                overflow: hidden;
+                /* Was overflow:hidden, which silently cut off SOL/USD with no
+                   way to reach it. Scroll instead, with a visible scrollbar. */
+                overflow-x: auto;
+                overflow-y: hidden;
+                scrollbar-width: thin;
+                scrollbar-color: var(--surface-3) transparent;
+            }
+            .mc-sym-bar::-webkit-scrollbar {
+                height: 3px;
+            }
+            .mc-sym-bar::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            .mc-sym-bar::-webkit-scrollbar-thumb {
+                background: var(--surface-3);
+                border-radius: 2px;
             }
             .mc-sym {
-                padding: 3px 10px;
+                padding: 5px 10px;
                 border-radius: 5px;
                 font-family: var(--font-mono);
                 font-size: 9px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
-                color: rgba(255, 255, 255, 0.3);
+                color: var(--t-faint);
                 background: transparent;
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 white-space: nowrap;
+                cursor: pointer;
+                transition:
+                    color 0.18s,
+                    background 0.18s,
+                    border-color 0.18s;
+            }
+            .mc-sym:hover {
+                color: var(--t-secondary);
+                border-color: rgba(255, 255, 255, 0.16);
             }
             .mc-sym.active {
                 color: var(--accent);
@@ -1338,6 +1593,7 @@
 
             .mc-sym-gap {
                 flex: 1;
+                min-width: 8px;
             }
             .mc-tf-group {
                 display: flex;
@@ -1347,11 +1603,18 @@
                 font-family: var(--font-mono);
                 font-size: 9px;
                 font-weight: 700;
-                color: rgba(255, 255, 255, 0.2);
-                padding: 2px 6px;
+                color: var(--t-faint);
+                padding: 5px 6px;
                 border-radius: 3px;
                 background: transparent;
                 border: none;
+                cursor: pointer;
+                transition:
+                    color 0.18s,
+                    background 0.18s;
+            }
+            .mc-tf:hover {
+                color: var(--t-secondary);
             }
             .mc-tf.active {
                 color: var(--accent);
@@ -1369,7 +1632,7 @@
             .mc-pair-name {
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
                 margin-bottom: 2px;
             }
@@ -1410,7 +1673,7 @@
             .mc-ohlc-lbl {
                 font-family: var(--font-mono);
                 font-size: 8px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
             }
             .mc-ohlc-val {
@@ -1461,7 +1724,7 @@
             .mc-vol-lbl {
                 font-family: var(--font-mono);
                 font-size: 8px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
             }
             .mc-vol-bar {
@@ -1488,7 +1751,7 @@
             .mc-vol-num {
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
             }
 
             .mc-assets {
@@ -1509,7 +1772,7 @@
             .mc-asset-sym {
                 font-family: var(--font-mono);
                 font-size: 8px;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
                 letter-spacing: 0.5px;
             }
             .mc-asset-px {
@@ -1560,7 +1823,7 @@
             .mc-signals-lbl {
                 font-family: var(--font-mono);
                 font-size: 8px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
             }
             .mc-signal {
@@ -1608,11 +1871,11 @@
                 flex: 1;
                 font-family: var(--font-mono);
                 font-size: 10px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
                 line-height: 1.5;
             }
             .mc-footer-txt b {
-                color: rgba(255, 255, 255, 0.45);
+                color: var(--t-secondary);
             }
 
             .btn-open-terminal {
@@ -1759,10 +2022,11 @@
             .oc-type-btn {
                 flex: 1;
                 padding: 8px 4px;
+                min-height: 34px;
                 border-radius: 8px;
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 background: transparent;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
                 font-family: var(--font-mono);
                 font-size: 10px;
                 font-weight: 700;
@@ -1806,14 +2070,14 @@
             .oc-lbl {
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
                 text-transform: uppercase;
             }
             .oc-hint {
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.15);
+                color: var(--t-faint);
             }
 
             .oc-row {
@@ -1834,7 +2098,7 @@
                 color: #fff;
             }
             .oc-row input::placeholder {
-                color: rgba(255, 255, 255, 0.08);
+                color: var(--t-muted);
             }
 
             .oc-unit {
@@ -1845,7 +2109,7 @@
                 font-family: var(--font-mono);
                 font-size: 11px;
                 font-weight: 700;
-                color: rgba(255, 255, 255, 0.4);
+                color: var(--t-secondary);
                 white-space: nowrap;
                 flex-shrink: 0;
             }
@@ -1870,7 +2134,7 @@
             .oc-est-lbl {
                 font-family: var(--font-mono);
                 font-size: 8px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
                 letter-spacing: 0.8px;
                 margin-bottom: 6px;
                 text-transform: uppercase;
@@ -1883,13 +2147,13 @@
             .oc-est-key {
                 font-family: var(--font-mono);
                 font-size: 10px;
-                color: rgba(255, 255, 255, 0.25);
+                color: var(--t-faint);
             }
             .oc-est-val {
                 font-family: var(--font-mono);
                 font-size: 10px;
                 font-weight: 600;
-                color: rgba(255, 255, 255, 0.5);
+                color: var(--t-secondary);
             }
             .oc-est-val.green {
                 color: var(--accent);
@@ -1940,7 +2204,7 @@
                 gap: 4px;
                 font-family: var(--font-mono);
                 font-size: 9px;
-                color: rgba(255, 255, 255, 0.18);
+                color: var(--t-faint);
             }
 
             /* ═══════════════════════════════════════════════════
@@ -2004,7 +2268,7 @@
             }
             .status-pill.completed {
                 background: rgba(255, 255, 255, 0.05);
-                color: rgba(255, 255, 255, 0.3);
+                color: var(--t-faint);
                 border: 1px solid rgba(255, 255, 255, 0.08);
             }
 
@@ -2143,8 +2407,8 @@
                 font-size: 14px;
             }
             .news-refresh {
-                width: 30px;
-                height: 30px;
+                width: 34px;
+                height: 34px;
                 background: var(--surface-2);
                 border: 1px solid var(--border);
                 color: var(--accent);
@@ -2154,7 +2418,9 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                transition: all 0.3s;
+                transition:
+                    background 0.3s,
+                    transform 0.3s;
             }
             .news-refresh:hover {
                 background: var(--surface-3);
@@ -2180,6 +2446,7 @@
             .news-tab {
                 flex: 1;
                 padding: 7px 4px;
+                min-height: 34px;
                 border: 1px solid var(--border);
                 background: transparent;
                 border-radius: 8px;
@@ -2432,7 +2699,7 @@
             }
             .tv-hint {
                 font-size: 10px;
-                color: rgba(255, 255, 255, 0.2);
+                color: var(--t-faint);
                 font-weight: 400;
             }
 
@@ -2441,8 +2708,10 @@
                 gap: 6px;
             }
             .tv-ctrl {
-                width: 26px;
-                height: 26px;
+                /* 26px was below a comfortable pointer target; 32px clears
+                   WCAG 2.5.8 and is reachable without precision. */
+                min-width: 32px;
+                min-height: 32px;
                 border: none;
                 border-radius: 6px;
                 cursor: pointer;
@@ -2498,16 +2767,72 @@
                 .page-layout {
                     grid-template-columns: 1fr;
                 }
+                /* Move the sidebar under the main content instead of
+                   removing it — the feed stays reachable on tablet. */
                 .news-sidebar {
-                    display: none;
+                    position: static;
+                    max-height: none;
+                    overflow: visible;
+                    padding: 0 28px 28px;
                 }
             }
+
+            @media (max-width: 1024px) {
+                .mc-assets {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+                .mc-asset:nth-child(3n) {
+                    border-right: 1px solid rgba(255, 255, 255, 0.03);
+                }
+                .mc-asset:nth-child(2n) {
+                    border-right: none;
+                }
+                #tv-panel {
+                    width: calc(100vw - 48px);
+                }
+            }
+
+            @media (max-width: 860px) {
+                /* Drop the HBAR pill before anything is allowed to overflow. */
+                .hbar-pill {
+                    display: none;
+                }
+                .header {
+                    padding: 0 18px;
+                }
+            }
+
             @media (max-width: 768px) {
                 .two-col {
                     grid-template-columns: 1fr;
                 }
                 .stats-bar {
                     gap: 0;
+                    /* Was height:54px + overflow:hidden, which clipped the
+                       stat items on narrow screens. Scroll instead, keeping a
+                       thin visible scrollbar as the scroll affordance. */
+                    height: auto;
+                    min-height: 54px;
+                    overflow-x: auto;
+                    overflow-y: hidden;
+                    justify-content: flex-start;
+                    -webkit-overflow-scrolling: touch;
+                    scrollbar-width: thin;
+                    scrollbar-color: var(--surface-3) transparent;
+                }
+                .stats-bar::-webkit-scrollbar {
+                    height: 3px;
+                }
+                .stats-bar::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                .stats-bar::-webkit-scrollbar-thumb {
+                    background: var(--surface-3);
+                    border-radius: 2px;
+                }
+                .stat-item {
+                    flex: 0 0 auto;
+                    padding: 10px 20px;
                 }
                 .role-cards {
                     grid-template-columns: 1fr;
@@ -2518,10 +2843,134 @@
                 .main-content {
                     padding: 16px;
                 }
+                .news-sidebar {
+                    padding: 0 16px 16px;
+                }
+                .card {
+                    padding: 18px 16px;
+                }
+                /* Let the role cards breathe on small phones. */
+                .role-card {
+                    padding: 20px 18px;
+                }
+                .role-hero-title {
+                    letter-spacing: -1px;
+                }
+                #tv-panel {
+                    top: 12px;
+                    width: calc(100vw - 24px);
+                    height: min(560px, calc(100vh - 24px));
+                    min-width: 0;
+                }
+            }
+
+            @media (max-width: 560px) {
+                .logo-name {
+                    display: none;
+                }
+                .network-badge {
+                    font-size: 8px;
+                    padding: 5px 8px;
+                    letter-spacing: 0.5px;
+                }
+                .mc-ohlc {
+                    grid-template-columns: 1fr;
+                }
+                .mc-price-area {
+                    flex-direction: column;
+                    gap: 10px;
+                }
+                .mc-ohlc {
+                    text-align: left;
+                }
+                .oc-type-row,
+                .tc-rates {
+                    flex-wrap: wrap;
+                }
+                .mc-tf-group {
+                    display: none;
+                }
+                .identity-bar,
+                .identity-left,
+                .identity-right {
+                    flex-wrap: wrap;
+                }
+                .identity-right {
+                    align-items: flex-start;
+                }
+                /* Stack the offer / my-offer rows. */
+                .offer-item,
+                .my-offer,
+                .trade-item {
+                    flex-wrap: wrap;
+                }
+                .btn-select,
+                .status-pill {
+                    width: 100%;
+                }
+            }
+
+            @media (max-width: 400px) {
+                .mc-assets {
+                    grid-template-columns: 1fr;
+                }
+                .mc-asset {
+                    border-right: none;
+                }
+                .role-hero-title {
+                    font-size: 32px;
+                }
+                .role-hero-sub {
+                    font-size: 14px;
+                }
+            }
+
+            /* ═══════════════════════════════════════════════════
+           REDUCED MOTION — WCAG 2.3.3 / 2.2.2
+           Every animation below is decorative. Freeze them all and
+           render the static end-state instead of removing content.
+        ═══════════════════════════════════════════════════ */
+            @media (prefers-reduced-motion: reduce) {
+                html {
+                    scroll-behavior: auto;
+                }
+                *,
+                *::before,
+                *::after {
+                    animation-duration: 0.001ms !important;
+                    animation-iteration-count: 1 !important;
+                    transition-duration: 0.001ms !important;
+                    scroll-behavior: auto !important;
+                }
+                /* The ticker is continuous motion with no pause control, so
+                   under reduced motion it stops rather than scrolling. */
+                .role-ticker-track {
+                    transform: none !important;
+                    animation: none !important;
+                }
+                /* The volume bar animates its width; pin it to the final
+                   value so it does not read as stuck mid-animation. */
+                .mc-vol-fill {
+                    width: 72%;
+                    animation: none !important;
+                }
+                .role-content {
+                    opacity: 1;
+                    transform: none;
+                    animation: none !important;
+                }
+            }
+
+            /* Pause affordance for the ticker when motion is allowed but the
+               user prefers to interact (WCAG 2.2.2 pause/stop). */
+            .role-ticker {
+                overflow: hidden;
             }
         </style>
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Skip to main content</a>
+
         <!-- Background effects -->
         <div class="bg-grid"></div>
         <div class="bg-glow-1"></div>
@@ -2532,7 +2981,7 @@
 ════════════════════════════════════════════════════ -->
         <header class="header">
             <a href="#" class="logo">
-                <div class="logo-mark">ES</div>
+                <div class="logo-mark" aria-hidden="true">ES</div>
                 <span class="logo-name">Energy<span>Swap</span></span>
             </a>
 
@@ -2551,10 +3000,19 @@
 
             <div class="header-right">
                 <div id="account-info" class="wallet-chip hidden">
-                    <span id="role-badge" class="role-chip">—</span>
+                    <span id="role-badge" class="role-chip is-hidden"></span>
                     <div class="wallet-id-block">
                         <div class="wallet-role" id="wallet-role-label">Wallet ID</div>
-                        <div class="wallet-addr" id="account-id">—</div>
+                        <div class="wallet-addr is-empty" id="account-id">Not connected</div>
+                        <!-- Sign-in wallet. Deliberately a separate line from the
+                             Hedera settlement address above: they are different
+                             wallets doing different jobs, and the sign-in one is
+                             expected to hold nothing. Hidden until an any-wallet
+                             sign-in actually happens. -->
+                        <div class="wallet-addr wallet-addr-identity is-hidden" id="identity-account-id">Not connected</div>
+                        <div class="wallet-role wallet-role-sub is-hidden" id="identity-wallet-label">
+                            Sign-in wallet
+                        </div>
                     </div>
                     <button id="disconnect-btn" class="btn-disconnect">Disconnect</button>
                 </div>
@@ -2609,7 +3067,10 @@
             <div class="role-scan"></div>
 
             <!-- Ticker tape -->
-            <div class="role-ticker">
+            <!-- Decorative: this market ticker is continuous auto-scrolling motion that
+                 duplicates the Market Chart figures. Hidden from assistive tech
+                 so it is not announced as a live changing region. -->
+            <div class="role-ticker" aria-hidden="true">
                 <div class="role-ticker-track" id="ticker-track"></div>
             </div>
 
@@ -2708,12 +3169,35 @@
                     </div>
                 </div>
 
+                <!-- Any-wallet sign-in.
+                     Deliberately separate from the two cards above. Signing in
+                     here identifies you and nothing more — it never holds HBAR
+                     and never settles a trade. Users who keep their HBAR in a
+                     cold wallet should sign in with a wallet that holds nothing,
+                     so compromising it yields no funds. -->
+                <div class="wallet-any" role="group" aria-labelledby="wallet-any-title">
+                    <h3 id="wallet-any-title" class="wallet-any-title">Just browsing?</h3>
+                    <p class="wallet-any-desc">
+                        Sign in with any wallet through WalletConnect — MetaMask, Trust, Coinbase, Rabby or your
+                        phone. Browsing is open to everyone; posting or buying still needs a Hedera account with HBAR.
+                    </p>
+                    <div class="wallet-any-actions">
+                        <button id="btn-connect-wallet" class="btn-role ghost">Connect wallet</button>
+                        <button id="btn-disconnect-identity" class="btn-role ghost" hidden>Disconnect</button>
+                    </div>
+                    <p class="wallet-any-note">
+                        <span class="wallet-any-label">Sign-in wallet</span>
+                        <span id="identity-wallet-display" class="wallet-any-value">Not connected</span>
+                    </p>
+                </div>
+
                 <p class="role-footnote">
-                    Your wallet address is your identity, self-sovereign and verifiable on HashScan.
+                    Your Hedera account is your trading identity, verifiable on HashScan. Your sign-in wallet is
+                    separate and holds no HBAR.
                 </p>
             </div>
 
-            <div id="role-status" class="status-box"></div>
+            <div id="role-status" class="status-box" role="status" aria-live="polite"></div>
         </div>
 
         <!-- ════════════════════════════════════════════════════
@@ -2722,7 +3206,7 @@
         <div id="dashboard-screen" class="dashboard hidden">
             <div class="page-layout">
                 <!-- Main content -->
-                <main class="main-content">
+                <main class="main-content" id="main-content" tabindex="-1">
                     <section class="energy-evidence-note" aria-labelledby="energy-evidence-title">
                         <h2 id="energy-evidence-title">About the energy amounts</h2>
                         <p>
@@ -2739,12 +3223,18 @@
                         <!-- Web3 Identity Bar — Wallet Address as UserID -->
                         <div class="identity-bar" id="consumer-identity-bar">
                             <div class="identity-left">
-                                <div class="identity-avatar">C</div>
+                                <div class="identity-avatar" aria-hidden="true">C</div>
                                 <div class="identity-info">
                                     <div class="identity-role-label">Consumer Wallet ID</div>
-                                    <div class="identity-address" id="consumer-wallet-display">—</div>
+                                    <div class="identity-address is-empty" id="consumer-wallet-display">Not connected</div>
                                     <div class="identity-address-sub">
                                         Hedera Testnet, HTS enabled, self-sovereign identity
+                                    </div>
+                                    <!-- Sign-in wallet, shown the same way as the
+                                         settlement address above. Separate because
+                                         they are separate wallets. -->
+                                    <div class="identity-address-sub identity-signin is-hidden" id="consumer-signin-display">
+                                        —
                                     </div>
                                 </div>
                             </div>
@@ -2760,10 +3250,7 @@
                             <!-- Execute Trade -->
                             <div class="card">
                                 <div class="card-header">
-                                    <div class="card-title">
-                                        <div class="card-icon">PAY</div>
-                                        Execute Trade
-                                    </div>
+                                    <div class="card-title">Execute Trade</div>
                                 </div>
 
                                 <div class="terminal-wrap">
@@ -2796,7 +3283,7 @@
                                         <div class="tc-input-panel">
                                             <div class="tc-input-top">
                                                 <span class="tc-input-lbl">You Pay (estimated)</span>
-                                                <span class="tc-input-bal">Balance: <span>—</span></span>
+                                                <span class="tc-input-bal">Balance: <span class="is-empty">Not loaded</span></span>
                                             </div>
                                             <div class="tc-input-row">
                                                 <input type="number" id="hbar-input" placeholder="0.00" readonly />
@@ -2844,7 +3331,7 @@
                                         </div>
                                         <div class="tc-info-row">
                                             <span class="tc-info-lbl">PROSUMER ID</span>
-                                            <span class="tc-info-val" id="tc-prosumer">—</span>
+                                            <span class="tc-info-val is-empty" id="tc-prosumer">No offer selected</span>
                                         </div>
                                         <div class="tc-info-row">
                                             <span class="tc-info-lbl">AVAILABLE</span>
@@ -2879,41 +3366,52 @@
                                     <span class="live-badge"><span class="live-dot"></span> LIVE</span>
                                 </div>
                                 <div class="mc-terminal">
-                                    <div class="mc-sym-bar">
-                                        <span class="mc-sym active">HBAR/USD</span>
-                                        <span class="mc-sym">BTC/USD</span>
-                                        <span class="mc-sym">ETH/USD</span>
-                                        <span class="mc-sym">XAU/USD</span>
-                                        <span class="mc-sym">SOL/USD</span>
+                                    <div class="mc-sym-bar" role="group" aria-label="Market pair">
+                                        <button type="button" class="mc-sym active" data-symbol="HBAR/USD" aria-pressed="true">
+                                            HBAR/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="BTC/USD" aria-pressed="false">
+                                            BTC/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="ETH/USD" aria-pressed="false">
+                                            ETH/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="XAU/USD" aria-pressed="false">
+                                            XAU/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="SOL/USD" aria-pressed="false">
+                                            SOL/USD
+                                        </button>
                                         <span class="mc-sym-gap"></span>
-                                        <div class="mc-tf-group">
-                                            <span class="mc-tf">1m</span><span class="mc-tf">5m</span
-                                            ><span class="mc-tf">15m</span> <span class="mc-tf active">1H</span
-                                            ><span class="mc-tf">4H</span><span class="mc-tf">1D</span>
+                                        <div class="mc-tf-group" role="group" aria-label="Chart timeframe">
+                                            <button type="button" class="mc-tf" data-tf="5m" aria-pressed="false">5m</button>
+                                            <button type="button" class="mc-tf active" data-tf="1H" aria-pressed="true">1H</button>
+                                            <button type="button" class="mc-tf" data-tf="4H" aria-pressed="false">4H</button>
+                                            <button type="button" class="mc-tf" data-tf="1D" aria-pressed="false">1D</button>
                                         </div>
                                     </div>
                                     <div class="mc-price-area">
                                         <div class="mc-price-left">
-                                            <div class="mc-pair-name">HBAR / USD, Hedera Hashgraph</div>
-                                            <div class="mc-big-price">$—</div>
+                                            <div class="mc-pair-name" data-mc-pair-name>HBAR / USD</div>
+                                            <div class="mc-big-price" data-mc-price>$—</div>
                                             <div class="mc-delta">Waiting for live quote</div>
                                         </div>
                                         <div class="mc-ohlc">
                                             <div>
                                                 <div class="mc-ohlc-lbl">OPEN</div>
-                                                <div class="mc-ohlc-val">—</div>
+                                                <div class="mc-ohlc-val"></div>
                                             </div>
                                             <div>
                                                 <div class="mc-ohlc-lbl">HIGH</div>
-                                                <div class="mc-ohlc-val hi">—</div>
+                                                <div class="mc-ohlc-val hi"></div>
                                             </div>
                                             <div>
                                                 <div class="mc-ohlc-lbl">LOW</div>
-                                                <div class="mc-ohlc-val lo">—</div>
+                                                <div class="mc-ohlc-val lo"></div>
                                             </div>
                                             <div>
                                                 <div class="mc-ohlc-lbl">CLOSE</div>
-                                                <div class="mc-ohlc-val">—</div>
+                                                <div class="mc-ohlc-val"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -2927,95 +3425,15 @@
                                         <canvas class="mc-chart-canvas" id="mc-canvas-consumer"></canvas>
                                     </div>
                                     <div class="mc-vol">
-                                        <span class="mc-vol-lbl">VOL 24H</span>
+                                        <span class="mc-vol-lbl">24H</span>
                                         <div class="mc-vol-bar"><div class="mc-vol-fill"></div></div>
-                                        <span class="mc-vol-num">842.3M HBAR</span>
+                                        <span class="mc-vol-num" data-mc-change></span>
                                     </div>
-                                    <div class="mc-assets">
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">BTC/USD</div>
-                                            <div class="mc-asset-px">$83,412</div>
-                                            <div class="mc-asset-chg">+1.38%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,14 10,11 20,12 30,6 40,8 50,3 60,1"
-                                                    fill="none"
-                                                    stroke="var(--accent)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset dn">
-                                            <div class="mc-asset-sym">ETH/USD</div>
-                                            <div class="mc-asset-px">$2,184</div>
-                                            <div class="mc-asset-chg">-0.72%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,2 10,4 20,3 30,7 40,10 50,12 60,14"
-                                                    fill="none"
-                                                    stroke="var(--red)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">XAU/USD</div>
-                                            <div class="mc-asset-px">$3,104</div>
-                                            <div class="mc-asset-chg">+0.91%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,13 10,11 20,12 30,9 40,7 50,5 60,3"
-                                                    fill="none"
-                                                    stroke="var(--amber)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">SOL/USD</div>
-                                            <div class="mc-asset-px">$134.22</div>
-                                            <div class="mc-asset-chg">+3.05%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,14 10,12 20,10 30,8 40,5 50,3 60,1"
-                                                    fill="none"
-                                                    stroke="var(--accent)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset dn">
-                                            <div class="mc-asset-sym">EUR/USD</div>
-                                            <div class="mc-asset-px">1.0821</div>
-                                            <div class="mc-asset-chg">-0.18%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,3 10,5 20,6 30,8 40,10 50,12 60,14"
-                                                    fill="none"
-                                                    stroke="var(--red)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">GBP/USD</div>
-                                            <div class="mc-asset-px">1.2938</div>
-                                            <div class="mc-asset-chg">+0.34%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,12 10,10 20,11 30,8 40,7 50,5 60,4"
-                                                    fill="none"
-                                                    stroke="var(--blue)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
+                                    <div class="mc-assets" data-market-grid>
+                                        <!-- Prices are fetched from /api/prices and
+                                             rendered here. Static figures were
+                                             removed so nothing here can be
+                                             mistaken for a live quote. -->
                                     </div>
                                     <div class="mc-signals">
                                         <span class="mc-signals-lbl">SIGNALS</span>
@@ -3058,12 +3476,17 @@
                         <!-- Web3 Identity Bar — Wallet Address as UserID -->
                         <div class="identity-bar" id="prosumer-identity-bar">
                             <div class="identity-left">
-                                <div class="identity-avatar">P</div>
+                                <div class="identity-avatar" aria-hidden="true">P</div>
                                 <div class="identity-info">
                                     <div class="identity-role-label">Prosumer Wallet ID</div>
-                                    <div class="identity-address" id="prosumer-wallet-display">—</div>
+                                    <div class="identity-address is-empty" id="prosumer-wallet-display">Not connected</div>
                                     <div class="identity-address-sub">
                                         Hedera Testnet, HTS enabled, self-sovereign identity
+                                    </div>
+                                    <!-- Sign-in wallet, shown the same way as the
+                                         settlement address above. -->
+                                    <div class="identity-address-sub identity-signin is-hidden" id="prosumer-signin-display">
+                                        —
                                     </div>
                                 </div>
                             </div>
@@ -3145,11 +3568,11 @@
                                             </div>
                                             <div class="oc-est-row">
                                                 <span class="oc-est-key">Price per kWh (USD)</span
-                                                ><span class="oc-est-val" id="oc-rate-usd-val">—</span>
+                                                ><span class="oc-est-val is-empty" id="oc-rate-usd-val">Awaiting quote</span>
                                             </div>
                                             <div class="oc-est-row">
                                                 <span class="oc-est-key">Total listing value (USD)</span
-                                                ><span class="oc-est-val" id="oc-usd-val">—</span>
+                                                ><span class="oc-est-val is-empty" id="oc-usd-val">Awaiting quote</span>
                                             </div>
                                             <div class="oc-est-row">
                                                 <span class="oc-est-key">Hedera tx fee</span
@@ -3181,41 +3604,52 @@
                                     <span class="live-badge"><span class="live-dot"></span> LIVE</span>
                                 </div>
                                 <div class="mc-terminal">
-                                    <div class="mc-sym-bar">
-                                        <span class="mc-sym active">HBAR/USD</span>
-                                        <span class="mc-sym">BTC/USD</span>
-                                        <span class="mc-sym">ETH/USD</span>
-                                        <span class="mc-sym">XAU/USD</span>
-                                        <span class="mc-sym">SOL/USD</span>
+                                    <div class="mc-sym-bar" role="group" aria-label="Market pair">
+                                        <button type="button" class="mc-sym active" data-symbol="HBAR/USD" aria-pressed="true">
+                                            HBAR/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="BTC/USD" aria-pressed="false">
+                                            BTC/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="ETH/USD" aria-pressed="false">
+                                            ETH/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="XAU/USD" aria-pressed="false">
+                                            XAU/USD
+                                        </button>
+                                        <button type="button" class="mc-sym" data-symbol="SOL/USD" aria-pressed="false">
+                                            SOL/USD
+                                        </button>
                                         <span class="mc-sym-gap"></span>
-                                        <div class="mc-tf-group">
-                                            <span class="mc-tf">1m</span><span class="mc-tf">5m</span
-                                            ><span class="mc-tf">15m</span> <span class="mc-tf active">1H</span
-                                            ><span class="mc-tf">4H</span><span class="mc-tf">1D</span>
+                                        <div class="mc-tf-group" role="group" aria-label="Chart timeframe">
+                                            <button type="button" class="mc-tf" data-tf="5m" aria-pressed="false">5m</button>
+                                            <button type="button" class="mc-tf active" data-tf="1H" aria-pressed="true">1H</button>
+                                            <button type="button" class="mc-tf" data-tf="4H" aria-pressed="false">4H</button>
+                                            <button type="button" class="mc-tf" data-tf="1D" aria-pressed="false">1D</button>
                                         </div>
                                     </div>
                                     <div class="mc-price-area">
                                         <div class="mc-price-left">
-                                            <div class="mc-pair-name">HBAR / USD, Hedera Hashgraph</div>
-                                            <div class="mc-big-price">$—</div>
+                                            <div class="mc-pair-name" data-mc-pair-name>HBAR / USD</div>
+                                            <div class="mc-big-price" data-mc-price>$—</div>
                                             <div class="mc-delta">Waiting for live quote</div>
                                         </div>
                                         <div class="mc-ohlc">
                                             <div>
                                                 <div class="mc-ohlc-lbl">OPEN</div>
-                                                <div class="mc-ohlc-val">—</div>
+                                                <div class="mc-ohlc-val"></div>
                                             </div>
                                             <div>
                                                 <div class="mc-ohlc-lbl">HIGH</div>
-                                                <div class="mc-ohlc-val hi">—</div>
+                                                <div class="mc-ohlc-val hi"></div>
                                             </div>
                                             <div>
                                                 <div class="mc-ohlc-lbl">LOW</div>
-                                                <div class="mc-ohlc-val lo">—</div>
+                                                <div class="mc-ohlc-val lo"></div>
                                             </div>
                                             <div>
                                                 <div class="mc-ohlc-lbl">CLOSE</div>
-                                                <div class="mc-ohlc-val">—</div>
+                                                <div class="mc-ohlc-val"></div>
                                             </div>
                                         </div>
                                     </div>
@@ -3229,95 +3663,15 @@
                                         <canvas class="mc-chart-canvas" id="mc-canvas-prosumer"></canvas>
                                     </div>
                                     <div class="mc-vol">
-                                        <span class="mc-vol-lbl">VOL 24H</span>
+                                        <span class="mc-vol-lbl">24H</span>
                                         <div class="mc-vol-bar"><div class="mc-vol-fill"></div></div>
-                                        <span class="mc-vol-num">842.3M HBAR</span>
+                                        <span class="mc-vol-num" data-mc-change></span>
                                     </div>
-                                    <div class="mc-assets">
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">BTC/USD</div>
-                                            <div class="mc-asset-px">$83,412</div>
-                                            <div class="mc-asset-chg">+1.38%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,14 10,11 20,12 30,6 40,8 50,3 60,1"
-                                                    fill="none"
-                                                    stroke="var(--accent)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset dn">
-                                            <div class="mc-asset-sym">ETH/USD</div>
-                                            <div class="mc-asset-px">$2,184</div>
-                                            <div class="mc-asset-chg">-0.72%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,2 10,4 20,3 30,7 40,10 50,12 60,14"
-                                                    fill="none"
-                                                    stroke="var(--red)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">XAU/USD</div>
-                                            <div class="mc-asset-px">$3,104</div>
-                                            <div class="mc-asset-chg">+0.91%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,13 10,11 20,12 30,9 40,7 50,5 60,3"
-                                                    fill="none"
-                                                    stroke="var(--amber)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">SOL/USD</div>
-                                            <div class="mc-asset-px">$134.22</div>
-                                            <div class="mc-asset-chg">+3.05%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,14 10,12 20,10 30,8 40,5 50,3 60,1"
-                                                    fill="none"
-                                                    stroke="var(--accent)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset dn">
-                                            <div class="mc-asset-sym">EUR/USD</div>
-                                            <div class="mc-asset-px">1.0821</div>
-                                            <div class="mc-asset-chg">-0.18%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,3 10,5 20,6 30,8 40,10 50,12 60,14"
-                                                    fill="none"
-                                                    stroke="var(--red)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <div class="mc-asset up">
-                                            <div class="mc-asset-sym">GBP/USD</div>
-                                            <div class="mc-asset-px">1.2938</div>
-                                            <div class="mc-asset-chg">+0.34%</div>
-                                            <svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none">
-                                                <polyline
-                                                    points="0,12 10,10 20,11 30,8 40,7 50,5 60,4"
-                                                    fill="none"
-                                                    stroke="var(--blue)"
-                                                    stroke-width="1.5"
-                                                    stroke-linejoin="round"
-                                                />
-                                            </svg>
-                                        </div>
+                                    <div class="mc-assets" data-market-grid>
+                                        <!-- Prices are fetched from /api/prices and
+                                             rendered here. Static figures were
+                                             removed so nothing here can be
+                                             mistaken for a live quote. -->
                                     </div>
                                     <div class="mc-signals">
                                         <span class="mc-signals-lbl">SIGNALS</span>
@@ -3362,7 +3716,7 @@
                         </ul>
                     </div>
 
-                    <div id="status" class="status-box"></div>
+                    <div id="status" class="status-box" role="status" aria-live="polite"></div>
                 </main>
 
                 <!-- News sidebar -->
@@ -3373,15 +3727,59 @@
                                 Live Updates
                                 <span class="live-dot"></span>
                             </div>
-                            <button class="news-refresh" id="news-refresh-btn" title="Refresh">↻</button>
+                            <button
+                                class="news-refresh"
+                                id="news-refresh-btn"
+                                type="button"
+                                title="Refresh"
+                                aria-label="Refresh news feed"
+                            >
+                                <span aria-hidden="true">↻</span>
+                            </button>
                         </div>
-                        <div class="news-tabs">
-                            <button class="news-tab active" data-tab="blockchain">Crypto</button>
-                            <button class="news-tab" data-tab="energy">Energy</button>
-                            <button class="news-tab" data-tab="tech">AI</button>
-                            <button class="news-tab" data-tab="forex">Forex</button>
+                        <div class="news-tabs" role="tablist" aria-label="News category">
+                            <button
+                                type="button"
+                                role="tab"
+                                class="news-tab active"
+                                data-tab="blockchain"
+                                aria-selected="true"
+                                aria-controls="news-feed"
+                            >
+                                Crypto
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                class="news-tab"
+                                data-tab="energy"
+                                aria-selected="false"
+                                aria-controls="news-feed"
+                            >
+                                Energy
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                class="news-tab"
+                                data-tab="tech"
+                                aria-selected="false"
+                                aria-controls="news-feed"
+                            >
+                                AI
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                class="news-tab"
+                                data-tab="forex"
+                                aria-selected="false"
+                                aria-controls="news-feed"
+                            >
+                                Forex
+                            </button>
                         </div>
-                        <div id="news-feed" class="news-feed">
+                        <div id="news-feed" class="news-feed" role="region" aria-label="Latest news" aria-live="polite">
                             <div class="news-loading">
                                 <div class="news-spinner"></div>
                                 <span>Fetching updates...</span>
@@ -3399,10 +3797,10 @@
             <li>
                 <div class="offer-item">
                     <div>
-                        <div class="offer-kwh"><span class="kwh">—</span> <span>kWh</span></div>
-                        <div class="offer-rate"><span class="price">—</span> HBAR/kWh</div>
-                        <div class="offer-seller">Seller: <span class="prosumer-id">—</span></div>
-                        <div class="offer-time">Posted: <span class="posted-at">—</span></div>
+                        <div class="offer-kwh"><span class="kwh"></span> <span>kWh</span></div>
+                        <div class="offer-rate"><span class="price"></span> HBAR/kWh</div>
+                        <div class="offer-seller">Seller: <span class="prosumer-id"></span></div>
+                        <div class="offer-time">Posted: <span class="posted-at"></span></div>
                     </div>
                     <button class="btn-select select-offer-btn">Select</button>
                 </div>
@@ -3412,25 +3810,31 @@
         <!-- ════════════════════════════════════════════════════
      FLOATING TRADINGVIEW TERMINAL
 ════════════════════════════════════════════════════ -->
-        <div id="tv-panel">
-            <div class="tv-rz n" data-dir="n"></div>
-            <div class="tv-rz s" data-dir="s"></div>
-            <div class="tv-rz e" data-dir="e"></div>
-            <div class="tv-rz w" data-dir="w"></div>
-            <div class="tv-rz nw" data-dir="nw"></div>
-            <div class="tv-rz ne" data-dir="ne"></div>
-            <div class="tv-rz sw" data-dir="sw"></div>
-            <div class="tv-rz se" data-dir="se"></div>
+        <div id="tv-panel" role="dialog" aria-modal="true" aria-label="EnergySwap Trading Terminal">
+            <div class="tv-rz n" data-dir="n" aria-hidden="true"></div>
+            <div class="tv-rz s" data-dir="s" aria-hidden="true"></div>
+            <div class="tv-rz e" data-dir="e" aria-hidden="true"></div>
+            <div class="tv-rz w" data-dir="w" aria-hidden="true"></div>
+            <div class="tv-rz nw" data-dir="nw" aria-hidden="true"></div>
+            <div class="tv-rz ne" data-dir="ne" aria-hidden="true"></div>
+            <div class="tv-rz sw" data-dir="sw" aria-hidden="true"></div>
+            <div class="tv-rz se" data-dir="se" aria-hidden="true"></div>
             <div class="tv-header" id="tv-drag-handle">
                 <div class="tv-title">
-                    <span class="tv-title-dot"></span>
+                    <span class="tv-title-dot" aria-hidden="true"></span>
                     EnergySwap Trading Terminal
                     <span class="tv-hint">Drag to move. Resize from edges.</span>
                 </div>
                 <div class="tv-controls">
-                    <button class="tv-ctrl max" id="tv-btn-max" title="Maximise">⤢</button>
-                    <button class="tv-ctrl min" id="tv-btn-min" title="Minimise">─</button>
-                    <button class="tv-ctrl cls" id="tv-btn-cls" title="Close">Close</button>
+                    <button type="button" class="tv-ctrl max" id="tv-btn-max" title="Maximise" aria-label="Maximise terminal">
+                        <span aria-hidden="true">⤢</span>
+                    </button>
+                    <button type="button" class="tv-ctrl min" id="tv-btn-min" title="Minimise" aria-label="Minimise terminal">
+                        <span aria-hidden="true">─</span>
+                    </button>
+                    <button type="button" class="tv-ctrl cls" id="tv-btn-cls" title="Close" aria-label="Close terminal">
+                        Close
+                    </button>
                 </div>
             </div>
             <div class="tv-body" id="tv-panel-body"></div>
@@ -3479,27 +3883,34 @@
                 buildTicker();
                 miniChartSpotUpdaters.forEach((update) => update(price));
             });
-            setInterval(() => {
-                TICKERS.forEach((t) => {
-                    if (t.sym === 'HBAR/USD') {
-                        t.px = Number.isFinite(window.currentHbarPriceUSD)
-                            ? window.currentHbarPriceUSD.toFixed(4)
-                            : '—';
-                        return;
-                    }
-                    const raw = parseFloat(t.px.replace(/,/g, ''));
-                    const drift = (Math.random() - 0.49) * 0.012;
-                    const newPx = Math.max(0.001, raw * (1 + drift));
-                    t.px =
-                        newPx >= 1000
-                            ? newPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                            : newPx.toFixed(4);
-                    const chgVal = (parseFloat(t.chg) + (Math.random() - 0.5) * 0.15).toFixed(2);
-                    t.chg = chgVal;
-                    t.up = parseFloat(chgVal) >= 0;
-                });
-                buildTicker();
-            }, 3200);
+
+            // Decorative loops below redraw on a timer, which CSS reduced-motion
+            // rules cannot stop. Each one checks this first (WCAG 2.3.3).
+            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+            if (!reduceMotion) {
+                setInterval(() => {
+                    TICKERS.forEach((t) => {
+                        if (t.sym === 'HBAR/USD') {
+                            t.px = Number.isFinite(window.currentHbarPriceUSD)
+                                ? window.currentHbarPriceUSD.toFixed(4)
+                                : '—';
+                            return;
+                        }
+                        const raw = parseFloat(t.px.replace(/,/g, ''));
+                        const drift = (Math.random() - 0.49) * 0.012;
+                        const newPx = Math.max(0.001, raw * (1 + drift));
+                        t.px =
+                            newPx >= 1000
+                                ? newPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                : newPx.toFixed(4);
+                        const chgVal = (parseFloat(t.chg) + (Math.random() - 0.5) * 0.15).toFixed(2);
+                        t.chg = chgVal;
+                        t.up = parseFloat(chgVal) >= 0;
+                    });
+                    buildTicker();
+                }, 3200);
+            }
 
             // ── Role selection background candlestick chart ──────
             (function () {
@@ -3626,6 +4037,7 @@
 
                 draw();
                 new ResizeObserver(draw).observe(canvas);
+                if (reduceMotion) return;
                 setInterval(() => {
                     const last = candles[candles.length - 1];
                     const mv = (Math.random() - 0.495) * last.c * 0.012;
@@ -3643,7 +4055,125 @@
                 }, 1800);
             })();
 
-            // ── Mini market chart canvases ───────────────────────
+            // ── Market data (symbol + timeframe selectors) ─────────
+            // Backed by the backend price service. If it cannot be reached the
+            // chart says so instead of showing invented candles.
+            // Read lazily: main.js is a deferred module that executes after this inline
+// script is parsed, so the global is not populated yet at this point.
+const apiBase = () => (window.__ENERGYSWAP_API_BASE__ || 'http://localhost:3000').replace(/\/$/, '');
+            const GRID_SYMBOLS = ['HBAR/USD', 'BTC/USD', 'ETH/USD', 'SOL/USD', 'XAU/USD'];
+            const mcState = { symbol: 'HBAR/USD', timeframe: '1H', candles: [], live: [] };
+            const mcTerminals = [];
+
+            const money = (v, decimals = 2) =>
+                v >= 1000
+                    ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+                    : '$' + v.toFixed(decimals);
+
+            // True when a numeric value is safe to format.
+            const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
+            async function fetchJson(path) {
+                const res = await fetch(apiBase() + path);
+                if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+                return res.json();
+            }
+
+            function renderMcHeadline() {
+                const spot = mcState.live.length ? mcState.live[mcState.live.length - 1] : null;
+                mcTerminals.forEach((terminal) => {
+                    const nameEl = terminal.querySelector('[data-mc-pair-name]');
+                    const priceEl = terminal.querySelector('[data-mc-price]');
+                    const deltaEl = terminal.querySelector('.mc-delta');
+                    const changeEl = terminal.querySelector('[data-mc-change]');
+
+                    if (nameEl) nameEl.textContent = mcState.symbol.replace('/', ' / ');
+                    if (!spot) return;
+
+                    if (priceEl) priceEl.textContent = money(spot.c, 4);
+                    const ohlc = terminal.querySelectorAll('.mc-ohlc-val');
+                    if (ohlc?.length === 4) {
+                        [spot.o, spot.h, spot.l, spot.c].forEach((v, i) => {
+                            ohlc[i].textContent = isNum(v) ? v.toFixed(4) : '—';
+                        });
+                    }
+                    if (deltaEl) {
+                        const change = spot.c - spot.o;
+                        const pct = spot.o ? (change / spot.o) * 100 : 0;
+                        deltaEl.className = `mc-delta ${change >= 0 ? 'up' : 'dn'}`;
+                        deltaEl.textContent = `${change >= 0 ? '▲' : '▼'} ${
+                            change >= 0 ? '+' : ''
+                        }${change.toFixed(4)} (${pct.toFixed(2)}%) ${mcState.timeframe} candle`;
+                    }
+                    // 24h change only arrives from the spot endpoint, so guard it.
+                    if (changeEl) {
+                        const ch = isNum(spot.change24h) ? spot.change24h : null;
+                        changeEl.textContent = ch === null ? '—' : `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`;
+                    }
+                });
+            }
+
+            function renderMarketGrid(prices) {
+                mcTerminals.forEach((terminal) => {
+                    const grid = terminal.querySelector('[data-market-grid]');
+                    if (!grid) return;
+                    const rows = GRID_SYMBOLS.map((symbol) => {
+                        const quote = prices[symbol];
+                        const change = quote?.change24h ?? 0;
+                        const dir = change >= 0 ? 'up' : 'dn';
+                        const color = change >= 0 ? 'var(--accent)' : 'var(--red)';
+                        // Sparkline is derived from the fetched series when
+                        // available; omitted rather than drawn from fake data.
+                        const series = mcState.series?.[symbol];
+                        const spark =
+                            Array.isArray(series) && series.length > 2
+                                ? `<svg class="mc-sparkline" viewBox="0 0 60 16" preserveAspectRatio="none"><polyline points="${series
+                                      .map((p, i) => `${Math.round((i / (series.length - 1)) * 60)},${p.y}`)
+                                      .join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/></svg>`
+                                : '';
+                        return `<div class="mc-asset ${dir}">
+                            <div class="mc-asset-sym">${symbol}</div>
+                            <div class="mc-asset-px">${quote ? money(quote.price) : '—'}</div>
+                            <div class="mc-asset-chg">${quote ? `${change >= 0 ? '+' : ''}${change.toFixed(2)}%` : '—'}</div>
+                            ${spark}
+                        </div>`;
+                    });
+                    grid.innerHTML = rows.join('');
+                });
+            }
+
+            async function loadMarketSeries(symbol, timeframe) {
+                mcState.symbol = symbol;
+                mcState.timeframe = timeframe;
+                try {
+                    const data = await fetchJson(
+                        `/api/prices/history?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`,
+                    );
+                    if (data.success && Array.isArray(data.candles) && data.candles.length) {
+                        mcState.candles = data.candles;
+                        mcState.live = data.candles.slice(-60);
+                        // Carry the 24h change across so the header keeps it
+                        // when only history was refetched.
+                        const known = mcState.prices?.[symbol];
+                        if (known && Number.isFinite(known.change24h)) {
+                            mcState.live = mcState.live.map((c) => ({ ...c, change24h: known.change24h }));
+                        }
+                        buildSparklineSeries();
+                    }
+                } catch (err) {
+                    // Leave the previous series visible rather than blanking it.
+                    console.warn('[market] series unavailable:', err.message);
+                }
+                renderMcHeadline();
+                mcTerminals.forEach((t) => {
+                    const canvas = t.querySelector('.mc-chart-canvas');
+                    const fn = mcDrawers.get(canvas);
+                    if (typeof fn === 'function') fn();
+                });
+            }
+
+            // Mini market chart canvases ───────────────────────
+            const mcDrawers = new Map();
             function drawMiniChart(id) {
                 const canvas = document.getElementById(id);
                 if (!canvas) return;
@@ -3794,9 +4324,19 @@
                         const change = last.c - last.o;
                         const percent = last.o ? (change / last.o) * 100 : 0;
                         delta.className = `mc-delta ${change >= 0 ? 'up' : 'dn'}`;
-                        delta.textContent = `${change >= 0 ? '▲' : '▼'} ${change >= 0 ? '+' : ''}${change.toFixed(4)} (${percent.toFixed(2)}%) live candle`;
+                        delta.textContent = `${change >= 0 ? '▲' : '▼'} ${
+                            change >= 0 ? '+' : ''
+                        }${change.toFixed(4)} (${percent.toFixed(2)}%) ${mcState.timeframe} candle`;
                     }
+                    if (typeof redraw === 'function') redraw();
                 });
+
+                // Registered so a symbol/timeframe change can repaint this
+                // canvas without re-registering an observer.
+                function redraw() {
+                    draw();
+                }
+                mcDrawers.set(canvas, redraw);
                 const currentSpot = Number(window.currentHbarPriceUSD);
                 if (Number.isFinite(currentSpot) && currentSpot > 0) {
                     miniChartSpotUpdaters[miniChartSpotUpdaters.length - 1](currentSpot);
@@ -3813,8 +4353,90 @@
                 }
             }
 
+            // ── Market selector wiring ──────────────────────────
+            // Normalise a fetched OHLC series into normalised sparkline points
+            // (0..60 x, 0..16 y) so the asset grid can draw them directly.
+            function buildSparklineSeries() {
+                const toPoints = (candles) => {
+                    const closes = candles.map((c) => c.c);
+                    const min = Math.min(...closes);
+                    const max = Math.max(...closes);
+                    const span = max - min || 1;
+                    const step = candles.length > 1 ? 60 / (candles.length - 1) : 60;
+                    return candles.map((c, i) => ({ x: i * step, y: 15 - ((c.c - min) / span) * 15 }));
+                };
+                mcState.series = { [mcState.symbol]: toPoints(mcState.candles) };
+            }
+
+            function setSelected(buttons, attr, value) {
+                buttons.forEach((b) => {
+                    const on = b.getAttribute(attr) === value;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+                });
+            }
+
+            async function refreshPrices() {
+                try {
+                    const data = await fetchJson(`/api/prices?symbols=${encodeURIComponent(GRID_SYMBOLS.join(','))}`);
+                    if (data.success && data.prices) {
+                        mcState.prices = data.prices;
+                        renderMarketGrid(data.prices);
+                    }
+                } catch (err) {
+                    console.warn('[market] prices unavailable:', err.message);
+                    mcTerminals.forEach((t) => {
+                        const grid = t.querySelector('[data-market-grid]');
+                        if (grid && !grid.children.length) {
+                            grid.innerHTML = `<div class="mc-asset"><div class="mc-asset-sym">Market data unavailable</div></div>`;
+                        }
+                    });
+                }
+            }
+
+            function initMarketSelectors() {
+                mcTerminals.forEach((terminal) => {
+                    if (terminal.dataset.mcWired) return;
+                    terminal.dataset.mcWired = '1';
+
+                    const symBar = terminal.querySelector('.mc-sym-bar');
+                    const tfGroup = terminal.querySelector('.mc-tf-group');
+                    if (!symBar || !tfGroup) return;
+
+                    symBar.addEventListener('click', (event) => {
+                        const btn = event.target.closest('.mc-sym');
+                        if (!btn) return;
+                        const symbol = btn.dataset.symbol;
+                        if (!symbol || symbol === mcState.symbol) return;
+                        setSelected(symBar.querySelectorAll('.mc-sym'), 'data-symbol', symbol);
+                        loadMarketSeries(symbol, mcState.timeframe);
+                    });
+
+                    tfGroup.addEventListener('click', (event) => {
+                        const btn = event.target.closest('.mc-tf');
+                        if (!btn) return;
+                        const tf = btn.dataset.tf;
+                        if (!tf || tf === mcState.timeframe) return;
+                        setSelected(tfGroup.querySelectorAll('.mc-tf'), 'data-tf', tf);
+                        loadMarketSeries(mcState.symbol, tf);
+                    });
+                });
+            }
+
+            async function initMarketData() {
+                await Promise.all([refreshPrices(), loadMarketSeries(mcState.symbol, mcState.timeframe)]);
+                initMarketSelectors();
+            }
+
             // ── TradingView floating terminal ─────────────────────
             let tvReady = false;
+            // Keeps the visible glyph, the tooltip and the accessible name in
+            // sync when these buttons are driven from script.
+            function setTvBtn(btn, glyph, title, ariaLabel) {
+                btn.textContent = glyph;
+                btn.title = title;
+                btn.setAttribute('aria-label', ariaLabel);
+            }
             function openTVPanel() {
                 const panel = document.getElementById('tv-panel');
                 panel.classList.add('visible');
@@ -3971,8 +4593,7 @@
                     minimised = !minimised;
                     body.style.display = minimised ? 'none' : '';
                     panel.style.height = minimised ? 'auto' : '';
-                    btn.textContent = minimised ? '⬜' : '─';
-                    btn.title = minimised ? 'Restore' : 'Minimise';
+                    setTvBtn(btn, minimised ? '⬜' : '─', minimised ? 'Restore' : 'Minimise', minimised ? 'Restore terminal' : 'Minimise terminal');
                     panel.querySelectorAll('.tv-rz').forEach((r) => (r.style.pointerEvents = minimised ? 'none' : ''));
                 });
                 document.getElementById('tv-btn-max').addEventListener('click', () => {
@@ -3985,8 +4606,7 @@
                         panel.style.height = p.h;
                         panel.style.borderRadius = '';
                         panel._maxed = false;
-                        btn.textContent = '⤢';
-                        btn.title = 'Maximise';
+                        setTvBtn(btn, '⤢', 'Maximise', 'Maximise terminal');
                     } else {
                         panel._prev = {
                             l: panel.style.left,
@@ -4000,10 +4620,23 @@
                         panel.style.height = '100vh';
                         panel.style.borderRadius = '0';
                         panel._maxed = true;
-                        btn.textContent = '⤡';
-                        btn.title = 'Restore';
+                        setTvBtn(btn, '⤡', 'Restore', 'Restore terminal');
                     }
                 });
+            }
+
+            // ── Market bootstrap ─────────────────────────────────
+            // Collect both terminals first, then load data and wire selectors.
+            function bootMarketData() {
+                document.querySelectorAll('.mc-terminal').forEach((t) => {
+                    if (!mcTerminals.includes(t)) mcTerminals.push(t);
+                });
+                initMarketData();
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', bootMarketData);
+            } else {
+                bootMarketData();
             }
         </script>
 

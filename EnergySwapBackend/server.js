@@ -26,18 +26,19 @@ const { rateLimit } = require('express-rate-limit');
 const https = require('https');
 const http = require('http');
 const { randomUUID } = require('node:crypto');
-const { getHbarPrice } = require('./priceService');
+const { getHbarPrice, getPrices, getOhlc, listSymbols, listTimeframes } = require('./priceService');
+const { issueChallenge, verifyChallenge } = require('./wallet-auth');
+// isHederaAccountId is deliberately not imported from here: this file has its
+// own stricter version that additionally round-trips through the Hedera SDK.
+const { issueBindingNonce, verifyBinding, normaliseEvmAddress, BINDING_PURPOSE } = require('./identity-binding');
 const { loadConfig } = require('./config');
 const database = require('./database');
 const repository = require('./repository');
 const {
     AccountId,
     Client,
-    PrivateKey,
-    TopicMessageSubmitTransaction,
     TransactionId,
     TransactionRecordQuery,
-    TransferTransaction,
 } = require('@hashgraph/sdk');
 const {
     canonicalizeReading,
@@ -54,23 +55,9 @@ app.set('trust proxy', config.nodeEnv === 'production' ? 1 : false);
 app.locals.repository = repository;
 app.locals.config = config;
 app.locals.createHederaClient = () => Client.forTestnet();
-app.locals.submitHcsMessage = async (client, topicId, message) => {
-    const transaction = await new TopicMessageSubmitTransaction()
-        .setTopicId(topicId)
-        .setMessage(message)
-        .execute(client);
-    await transaction.getReceipt(client);
-    return transaction;
-};
-app.locals.creditEnergyTokens = async (client, operatorId, prosumerAccountId, tokenId, tokenUnits, readingId) => {
-    const transaction = await new TransferTransaction()
-        .addTokenTransfer(tokenId, operatorId, -tokenUnits)
-        .addTokenTransfer(tokenId, prosumerAccountId, tokenUnits)
-        .setTransactionMemo(`EnergySwap meter ${readingId}`)
-        .execute(client);
-    await transaction.getReceipt(client);
-    return transaction;
-};
+// Chain WRITES are performed by the meter gateway with its own key, so this
+// service deliberately exposes no signing helpers. Only read-only queries are
+// kept here, for verifying transactions the gateway reports back.
 app.locals.getHcsConsensusTimestamp = async (client, transactionId) => {
     const record = await new TransactionRecordQuery().setTransactionId(transactionId).execute(client);
     return record.consensusTimestamp?.toDate().toISOString() || null;
@@ -124,6 +111,31 @@ app.use((req, res, next) => {
     });
     next();
 });
+/**
+ * Strict Hedera account-ID check for the write paths.
+ *
+ * `AccountId.fromString()` accepts Solidity-style hex and silently reinterprets
+ * it as shard/realm/num, so an Ethereum address such as
+ * "0x1234...5678" was being accepted and persisted. EnergySwap settles in HBAR
+ * on Hedera, so non-Hedera wallets must not be able to post or purchase.
+ *
+ * Accepts only canonical Hedera forms: shard.realm.num (0.0.1234) and
+ * alias form (0.1234), optionally a checksum alias is rejected here because
+ * the numeric form is what the wallet integration produces.
+ */
+function isHederaAccountId(value) {
+    if (typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    if (!/^\d+\.\d+\.\d+$/.test(trimmed)) return false;
+    try {
+        // Re-parse to confirm the numeric components are within ledger bounds.
+        AccountId.fromString(trimmed);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 app.get('/health/live', (_req, res) => res.status(200).json({ status: 'ok' }));
 app.get('/health', (_req, res) => res.status(200).json({ status: 'ok' }));
 app.get('/health/ready', async (_req, res) => {
@@ -170,6 +182,172 @@ function logNewsKeyStatus() {
 // ═══════════════════════════════════════════════════════════════════
 //  OFFER ROUTES
 // ═══════════════════════════════════════════════════════════════════
+// ─── WALLET OWNERSHIP ───────────────────────────────────────────────────────
+// Proves the caller controls the Hedera account they claim. Gated behind
+// REQUIRE_WALLET_SIGNATURE so existing flows keep working until enabled.
+
+app.get('/api/wallet-auth/challenge', (req, res) => {
+    if (!app.locals.config.requireWalletSignature) {
+        return res.status(404).json({ success: false, message: 'Wallet authentication is not enabled.' });
+    }
+    const accountId = String(req.query.accountId || '').trim();
+    if (!isHederaAccountId(accountId)) {
+        return res.status(400).json({
+            success: false,
+            message: 'accountId must be a Hedera account ID in the form 0.0.1234.',
+        });
+    }
+    const network = app.locals.config.hederaNetwork === 'mainnet' ? 'mainnet' : 'testnet';
+    res.json({ success: true, ...issueChallenge(accountId, network) });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  ON-CHAIN IDENTITY BINDINGS
+//
+//  Lets an EVM sign-in wallet and a Hedera settlement account be proven to
+//  share an owner. The proof is a Hedera consensus message whose *payer* is
+//  the account being bound — anyone can re-verify it from the mirror node, so
+//  this platform is not a trusted intermediary.
+//
+//  Nothing here is a substitute for the Hedera account actually signing. This
+//  API only issues nonces, then checks what the chain says.
+// ═══════════════════════════════════════════════════════════════════
+
+const IDENTITY_TOPIC = () => app.locals.config.hcsTopicId;
+const mirrorNode = () => app.locals.config.hederaMirrorNodeUrl;
+
+/** The topic is mandatory: without one there is nowhere to publish proof. */
+function requireIdentityTopic(res) {
+    if (IDENTITY_TOPIC()) return true;
+    res.status(503).json({
+        success: false,
+        message: 'Identity bindings are unavailable: HCS_TOPIC_ID is not configured.',
+    });
+    return false;
+}
+
+/**
+ * Step 1. Reserve a single-use nonce for a binding attempt.
+ *
+ * The nonce is scoped to the exact (EVM address, Hedera account) pair, so a
+ * nonce minted for one identity cannot be spent to bind another.
+ */
+app.post('/api/identity/binding/nonce', writeRateLimiter, (req, res) => {
+    if (!requireIdentityTopic(res)) return;
+    try {
+        const { evmAddress, hederaAccountId } = req.body || {};
+        const issued = issueBindingNonce({ evmAddress, hederaAccountId });
+        res.json({
+            success: true,
+            ...issued,
+            // Both sides must build byte-identical payloads, so hand the client
+            // the canonical shape rather than making it guess field names.
+            attestationTemplate: {
+                v: 1,
+                purpose: BINDING_PURPOSE,
+                hederaAccountId: String(hederaAccountId).trim(),
+                evmAddress: normaliseEvmAddress(evmAddress),
+                evmChainId: Number(req.body?.evmChainId) || 1,
+                nonce: issued.nonce,
+                issuedAt: new Date().toISOString(),
+            },
+            instructions:
+                'Submit attestationTemplate as a JSON payload to the Hedera topic ' +
+                `${IDENTITY_TOPIC()} from ${String(hederaAccountId).trim()}, then call ` +
+                'POST /api/identity/binding/verify with the same nonce.',
+        });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * Step 2. Verify the on-chain attestation and record the binding.
+ *
+ * Re-reads the mirror node every time. A previously stored row is never trusted
+ * as proof on its own — otherwise a tampered database could authorise anyone.
+ */
+app.post('/api/identity/binding/verify', writeRateLimiter, async (req, res) => {
+    if (!requireIdentityTopic(res)) return;
+    try {
+        const { evmAddress, hederaAccountId, nonce } = req.body || {};
+        const result = await verifyBinding({
+            evmAddress,
+            hederaAccountId,
+            nonce,
+            mirrorNodeUrl: mirrorNode(),
+            topicId: IDENTITY_TOPIC(),
+        });
+
+        if (!result.ok) {
+            // 409 rather than 400: the request was well-formed, the chain just
+            // does not (yet) show the proof.
+            return res.status(409).json({ success: false, message: result.reason });
+        }
+
+        const binding = await app.locals.repository.saveIdentityBinding({
+            evmAddress,
+            evmChainId: req.body?.evmChainId,
+            hederaAccountId,
+            topicId: IDENTITY_TOPIC(),
+            sequenceNumber: result.sequenceNumber,
+            consensusTimestamp: result.consensusTimestamp,
+        });
+
+        res.json({ success: true, binding });
+    } catch (error) {
+        console.error('[Identity] Binding verification failed:', error.message, 'requestId:', req.requestId);
+        res.status(500).json({
+            success: false,
+            message: 'Could not verify the identity binding.',
+            requestId: req.requestId,
+        });
+    }
+});
+
+/** Read the binding recorded for an EVM sign-in wallet, if any. */
+app.get('/api/identity/binding', async (req, res) => {
+    try {
+        const evmAddress = String(req.query.evmAddress || '').trim();
+        if (!normaliseEvmAddress(evmAddress)) {
+            return res.status(400).json({ success: false, message: 'evmAddress must be a 20-byte hex EVM address.' });
+        }
+        const binding = await app.locals.repository.getIdentityBindingByEvm(evmAddress);
+        res.json({
+            success: true,
+            binding,
+            canTrade: Boolean(binding),
+            explanation: binding
+                ? 'This wallet is linked to a Hedera settlement account.'
+                : 'This wallet is not linked to a Hedera account yet, so it can browse but not trade.',
+        });
+    } catch (error) {
+        console.error('[Identity] Binding lookup failed:', error.message, 'requestId:', req.requestId);
+        res.status(500).json({ success: false, message: 'Could not read the identity binding.', requestId: req.requestId });
+    }
+});
+
+/** Unlink a sign-in wallet from its Hedera account. */
+app.delete('/api/identity/binding', writeRateLimiter, async (req, res) => {
+    try {
+        const evmAddress = String(req.body?.evmAddress || req.query?.evmAddress || '').trim();
+        if (!normaliseEvmAddress(evmAddress)) {
+            return res.status(400).json({ success: false, message: 'evmAddress must be a 20-byte hex EVM address.' });
+        }
+        const removed = await app.locals.repository.deleteIdentityBinding(evmAddress);
+        res.json({
+            success: true,
+            removed,
+            note: removed
+                ? 'Unlinked. The on-chain attestation remains public; relinking will require a fresh one.'
+                : 'No binding existed for that wallet.',
+        });
+    } catch (error) {
+        console.error('[Identity] Unlink failed:', error.message, 'requestId:', req.requestId);
+        res.status(500).json({ success: false, message: 'Could not remove the identity binding.', requestId: req.requestId });
+    }
+});
+
 app.post('/api/post-offer', writeRateLimiter, async (req, res) => {
     try {
         const { prosumerId, energyAmountKWh, hbarPerKWh } = req.body;
@@ -177,10 +355,29 @@ app.post('/api/post-offer', writeRateLimiter, async (req, res) => {
             return res
                 .status(400)
                 .json({ success: false, message: 'Missing required fields: prosumerId, energyAmountKWh, hbarPerKWh.' });
-        try {
-            AccountId.fromString(prosumerId.trim());
-        } catch {
-            return res.status(400).json({ success: false, message: 'prosumerId must be a valid Hedera account ID.' });
+        if (!isHederaAccountId(prosumerId))
+            return res.status(400).json({
+                success: false,
+                message:
+                    'prosumerId must be a Hedera account ID in the form 0.0.1234. EnergySwap settles in HBAR, so a non-Hedera wallet cannot post an offer.',
+            });
+
+        // Prove the caller actually controls the account they claim.
+        if (app.locals.config.requireWalletSignature) {
+            const verification = await verifyChallenge({
+                accountId: prosumerId.trim(),
+                nonce: req.body.challengeNonce,
+                signature: req.body.challengeSignature,
+                mirrorNodeUrl: app.locals.config.hederaMirrorNodeUrl,
+                expectedNetwork: app.locals.config.hederaNetwork === 'mainnet' ? 'mainnet' : 'testnet',
+                maxAgeMs: app.locals.config.walletSignatureMaxAgeMs,
+            });
+            if (!verification.ok) {
+                return res.status(401).json({
+                    success: false,
+                    message: `Wallet signature verification failed: ${verification.reason}`,
+                });
+            }
         }
         const kwh = Number(energyAmountKWh);
         const rate = Number(hbarPerKWh);
@@ -210,7 +407,7 @@ app.get('/api/offers', async (req, res) => {
     try {
         res.json({ success: true, offers: await app.locals.repository.listOffers({ availableOnly: true }) });
     } catch (e) {
-        res.status(500).json({ success: false, message: 'Failed to fetch offers.', error: e.message });
+        res.status(500).json({ success: false, message: 'Failed to fetch offers.', requestId: req.requestId });
     }
 });
 
@@ -226,15 +423,11 @@ app.get('/api/all-offers', async (req, res) => {
 app.post('/api/oracle/readings', writeRateLimiter, async (req, res) => {
     if (!app.locals.config.meterOraclePublicKey)
         return res.status(503).json({ success: false, message: 'Meter oracle verification is not configured.' });
-    if (
-        !app.locals.config.operatorId ||
-        !app.locals.config.operatorKey ||
-        !app.locals.config.hcsTopicId ||
-        !app.locals.config.energyTokenId
-    )
-        return res
-            .status(503)
-            .json({ success: false, message: 'Hedera operator, HCS topic, and HTS token configuration are required.' });
+    if (!app.locals.config.hcsTopicId || !app.locals.config.energyTokenId)
+        return res.status(503).json({
+            success: false,
+            message: 'HCS topic and energy token configuration are required for meter evidence.',
+        });
 
     let reading;
     try {
@@ -313,90 +506,182 @@ app.post('/api/oracle/readings', writeRateLimiter, async (req, res) => {
             });
         }
 
-        const client = app.locals.createHederaClient();
-        let record = reservation.reading;
-        try {
-            const operatorId = AccountId.fromString(app.locals.config.operatorId);
-            client.setOperator(operatorId, PrivateKey.fromString(app.locals.config.operatorKey));
-
-            const hcsMessage = JSON.stringify({
-                ...reading,
-                signature,
-                gatewayPublicKey,
-                gatewayKeyFingerprint,
-                network: app.locals.config.hederaNetwork,
-                tokenId: app.locals.config.energyTokenId,
+        // The reading is verified and reserved. Chain writes are performed by the
+        // meter gateway with its own key, so this service never signs anything.
+        // We hand back the exact bytes the gateway must submit, then wait for it
+        // to report the resulting transaction IDs via the settlement endpoint.
+        const hcsMessage = JSON.stringify({
+            ...reading,
+            signature,
+            gatewayPublicKey,
+            gatewayKeyFingerprint,
+            network: app.locals.config.hederaNetwork,
+            tokenId: app.locals.config.energyTokenId,
+        });
+        if (Buffer.byteLength(hcsMessage, 'utf8') > 1024) {
+            const rejected = await app.locals.repository.updateMeterReading(reading.readingId, {
+                status: 'rejected',
+                error: 'Attestation exceeds the HCS message size limit.',
             });
-            if (Buffer.byteLength(hcsMessage, 'utf8') > 1024) {
-                record = await app.locals.repository.updateMeterReading(reading.readingId, {
-                    status: 'rejected',
-                    error: 'Attestation exceeds the HCS message size limit.',
-                });
-                return res.status(400).json({ success: false, message: record.error });
-            }
-
-            const hcsSubmit = await app.locals.submitHcsMessage(
-                client,
-                app.locals.config.hcsTopicId,
-                hcsMessage,
-            );
-            record = await app.locals.repository.updateMeterReading(reading.readingId, {
-                hcsTransactionId: hcsSubmit.transactionId.toString(),
-                attestedAt: new Date().toISOString(),
-                status: 'attested_pending_credit',
-                error: null,
-            });
-
-            try {
-                const consensusTimestamp = await app.locals.getHcsConsensusTimestamp(client, hcsSubmit.transactionId);
-                if (consensusTimestamp) {
-                    record = await app.locals.repository.updateMeterReading(reading.readingId, {
-                        hcsConsensusTimestamp: consensusTimestamp,
-                    });
-                }
-            } catch (error) {
-                console.warn('[Oracle] HCS transaction is confirmed, but consensus timestamp lookup failed:', error.message);
-            }
-
-            record = await app.locals.repository.updateMeterReading(reading.readingId, {
-                status: 'credit_pending',
-            });
-            const htsTransfer = await app.locals.creditEnergyTokens(
-                client,
-                operatorId,
-                prosumerAccountId,
-                app.locals.config.energyTokenId,
-                tokenUnits,
-                reading.readingId,
-            );
-            record = await app.locals.repository.updateMeterReading(reading.readingId, {
-                htsTransactionId: htsTransfer.transactionId.toString(),
-                status: 'credited',
-                creditedAt: new Date().toISOString(),
-                error: null,
-            });
-            return res.status(201).json({ success: true, reading: record });
-        } catch (error) {
-            console.error('[Oracle] Attestation/credit failed:', error.message);
-            try {
-                await app.locals.repository.updateMeterReading(reading.readingId, {
-                    error: 'Chain operation failed; this reading requires reconciliation before retry.',
-                });
-            } catch (persistenceError) {
-                console.error('[Oracle] Could not persist chain failure state:', persistenceError.message);
-            }
-            return res.status(502).json({
-                success: false,
-                message: 'Chain operation failed; this reading requires reconciliation before retry.',
-                readingId: reading.readingId,
-                status: record.status,
-            });
-        } finally {
-            client.close();
+            return res.status(400).json({ success: false, message: rejected.error });
         }
+
+        const record = reservation.reading;
+        return res.status(201).json({
+            success: true,
+            reading: record,
+            settlement: {
+                // The gateway signs and submits this message to the HCS topic.
+                hcs: {
+                    topicId: app.locals.config.hcsTopicId,
+                    message: hcsMessage,
+                    messageBase64: Buffer.from(hcsMessage, 'utf8').toString('base64'),
+                },
+                // The gateway signs and submits this token transfer to the HTS token.
+                hts: {
+                    tokenId: app.locals.config.energyTokenId,
+                    prosumerId: prosumerAccountId.toString(),
+                    tokenUnits,
+                    memo: `EnergySwap ${reading.readingId}`,
+                },
+                // After both transactions confirm, report them back so this
+                // service can verify and finalise the record.
+                reportTo: `/api/oracle/readings/${reading.readingId}/settlement`,
+            },
+        });
     } catch (error) {
         console.error('[Oracle] Reading persistence failed:', error.message);
         res.status(500).json({ success: false, message: 'Could not persist meter reading state.' });
+    }
+});
+
+/**
+ * Decide whether a reported HTS transaction really credited the prosumer.
+ *
+ * Kept pure so the rule that gates value release can be tested directly rather
+ * than only through the route. Returns null when acceptable, else a reason.
+ *
+ * @param {{transfers: Array<{accountId: {toString(): string}, amount: {toTinybars(): string|Long}>}>}} htsRecord
+ * @param {string} prosumerId
+ * @param {number|bigint} tokenUnits
+ */
+function htsCreditError(htsRecord, prosumerId, tokenUnits) {
+    // The prosumer RECEIVES the energy tokens, so their leg of the transfer is
+    // positive. Looking for a negative leg here would reject every valid credit.
+    const credit = (htsRecord?.transfers || []).find(
+        (t) => t.accountId.toString() === prosumerId && BigInt(t.amount.toTinybars()) > BigInt(0),
+    );
+    if (!credit) {
+        return 'The reported HTS transaction does not credit the prosumer at all.';
+    }
+    if (BigInt(credit.amount.toTinybars()) !== BigInt(tokenUnits)) {
+        return 'The reported HTS transaction credits a different amount than the attested energy.';
+    }
+    return null;
+}
+
+// Settle a reading with the transaction IDs the gateway submitted.
+// Verification here is read-only: the gateway holds the signing key and pays
+// the network fees, exactly as a prosumumer or consumer would.
+app.post('/api/oracle/readings/:readingId/settlement', writeRateLimiter, async (req, res) => {
+    const { hcsTransactionId, htsTransactionId } = req.body || {};
+    if (typeof hcsTransactionId !== 'string' || !hcsTransactionId || typeof htsTransactionId !== 'string' || !htsTransactionId) {
+        return res
+            .status(400)
+            .json({ success: false, message: 'Both hcsTransactionId and htsTransactionId are required.' });
+    }
+
+    const reading = await app.locals.repository.getMeterReading(req.params.readingId);
+    if (!reading) return res.status(404).json({ success: false, message: 'Reading evidence not found.' });
+    if (reading.status === 'credited') {
+        return res.status(200).json({ success: true, duplicate: true, reading });
+    }
+    if (reading.status === 'rejected') {
+        return res
+            .status(409)
+            .json({ success: false, message: 'This reading was rejected and cannot be settled.', reading });
+    }
+    if (reading.hcsTransactionId && reading.hcsTransactionId !== hcsTransactionId) {
+        return res.status(409).json({
+            success: false,
+            message: 'A different HCS transaction is already recorded for this reading.',
+            reading: { readingId: reading.readingId, hcsTransactionId: reading.hcsTransactionId },
+        });
+    }
+
+    const client = app.locals.createHederaClient();
+    try {
+        const hcsId = TransactionId.fromString(hcsTransactionId);
+        const hcsRecord = await new TransactionRecordQuery().setTransactionId(hcsId).execute(client);
+        if (hcsRecord.receipt?.status?.toString() !== 'SUCCESS') {
+            return res.status(400).json({ success: false, message: 'The reported HCS transaction did not succeed.' });
+        }
+
+        let record = await app.locals.repository.updateMeterReading(reading.readingId, {
+            hcsTransactionId,
+            attestedAt: new Date().toISOString(),
+            status: 'attested_pending_credit',
+            error: null,
+        });
+
+        try {
+            const consensusTimestamp = await app.locals.getHcsConsensusTimestamp(client, hcsId);
+            if (consensusTimestamp) {
+                record = await app.locals.repository.updateMeterReading(reading.readingId, {
+                    hcsConsensusTimestamp: consensusTimestamp,
+                });
+            }
+        } catch (error) {
+            console.warn('[Oracle] HCS confirmed, but consensus timestamp lookup failed:', error.message);
+        }
+
+        record = await app.locals.repository.updateMeterReading(reading.readingId, {
+            status: 'credit_pending',
+        });
+
+        const htsId = TransactionId.fromString(htsTransactionId);
+        const htsRecord = await new TransactionRecordQuery().setTransactionId(htsId).execute(client);
+        if (htsRecord.receipt?.status?.toString() !== 'SUCCESS') {
+            return res.status(400).json({
+                success: false,
+                message: 'The reported HTS credit transaction did not succeed; the reading stays pending.',
+                readingId: reading.readingId,
+            });
+        }
+
+        // Confirm the token actually moved to the prosumer for this reading.
+        const creditProblem = htsCreditError(htsRecord, reading.prosumerId, reading.tokenUnits);
+        if (creditProblem) {
+            return res.status(400).json({
+                success: false,
+                message: `${creditProblem} The reading stays pending.`,
+                readingId: reading.readingId,
+            });
+        }
+
+        record = await app.locals.repository.updateMeterReading(reading.readingId, {
+            htsTransactionId,
+            status: 'credited',
+            creditedAt: new Date().toISOString(),
+            error: null,
+        });
+        return res.status(200).json({ success: true, reading: record });
+    } catch (error) {
+        console.error('[Oracle] Settlement verification failed:', error.message);
+        await app.locals.repository
+            .updateMeterReading(reading.readingId, {
+                error: 'Settlement verification failed; this reading requires reconciliation.',
+            })
+            .catch((persistenceError) =>
+                console.error('[Oracle] Could not persist settlement failure state:', persistenceError.message),
+            );
+        return res.status(502).json({
+            success: false,
+            message: 'Could not verify the reported settlement transactions.',
+            readingId: reading.readingId,
+        });
+    } finally {
+        client.close();
     }
 });
 
@@ -472,12 +757,17 @@ app.post('/api/record-trade', writeRateLimiter, async (req, res) => {
         !transactionId
     )
         return res.status(400).json({ success: false, message: 'Missing required fields.' });
+    if (!isHederaAccountId(consumerAccountId))
+        return res.status(400).json({
+            success: false,
+            message:
+                'consumerAccountId must be a Hedera account ID in the form 0.0.1234. EnergySwap settles in HBAR, so a non-Hedera wallet cannot record a trade.',
+        });
     let parsedTransactionId;
     try {
-        AccountId.fromString(consumerAccountId);
         parsedTransactionId = TransactionId.fromString(transactionId);
     } catch {
-        return res.status(400).json({ success: false, message: 'Invalid Hedera account or transaction ID.' });
+        return res.status(400).json({ success: false, message: 'Invalid Hedera transaction ID.' });
     }
 
     let previous;
@@ -508,11 +798,6 @@ app.post('/api/record-trade', writeRateLimiter, async (req, res) => {
 
     let client;
     try {
-        if (!app.locals.config.operatorId || !app.locals.config.operatorKey)
-            return res.status(503).json({
-                success: false,
-                message: 'Backend operator credentials are required to verify the confirmed transaction.',
-            });
         const offer = await app.locals.repository.getOffer(offerId);
         if (!offer)
             return res.status(404).json({ success: false, message: 'Offer not found or no longer available.' });
@@ -526,11 +811,12 @@ app.post('/api/record-trade', writeRateLimiter, async (req, res) => {
                 .status(400)
                 .json({ success: false, message: 'Trade amount is below the supported HBAR precision.' });
 
+        // Read-only verification. TransactionRecordQuery is a query, not a
+        // transaction, so it needs no signing key. The platform deliberately
+        // holds no operator credentials on this path: the consumer's own
+        // wallet signed and paid the HBAR transfer, and the blockchain
+        // recorded it. Nothing here can move funds.
         client = app.locals.createHederaClient();
-        client.setOperator(
-            AccountId.fromString(app.locals.config.operatorId),
-            PrivateKey.fromString(app.locals.config.operatorKey),
-        );
         const transactionRecord = await new TransactionRecordQuery()
             .setTransactionId(parsedTransactionId)
             .execute(client);
@@ -628,7 +914,56 @@ app.get('/api/hbar-price', async (req, res) => {
     try {
         res.json({ success: true, priceUSD: await getHbarPrice() });
     } catch (e) {
-        res.status(500).json({ success: false, message: e.message });
+        // Never return the upstream error text: it can carry provider URLs,
+        // rate-limit headers and account hints. Log it, correlate by requestId.
+        console.error('[Price] HBAR price failed:', e.message, 'requestId:', req.requestId);
+        res.status(500).json({ success: false, message: 'Failed to fetch the HBAR price.', requestId: req.requestId });
+    }
+});
+
+// Supported market pairs and the timeframes the upstream provider can serve.
+app.get('/api/markets', (_req, res) => {
+    res.json({ success: true, symbols: listSymbols(), timeframes: listTimeframes() });
+});
+
+// Live spot prices for one or more pairs.
+//   GET /api/prices?symbols=BTC/USD,ETH/USD
+// Unknown symbols are reported rather than guessed at.
+app.get('/api/prices', async (req, res) => {
+    try {
+        const known = listSymbols().map((s) => s.symbol);
+        const requested = String(req.query.symbols || '')
+            .split(',')
+            .map((s) => s.trim().toUpperCase())
+            .filter(Boolean);
+
+        if (!requested.length) {
+            return res.json({ success: true, prices: {}, requested, known });
+        }
+
+        const unknown = requested.filter((s) => !known.includes(s));
+        const prices = await getPrices(requested);
+        res.json({ success: true, prices, requested, unknown, known });
+    } catch (e) {
+        console.error('[Price] Batch fetch failed:', e.message, 'requestId:', req.requestId);
+        res.status(500).json({ success: false, message: 'Failed to fetch prices.', requestId: req.requestId });
+    }
+});
+
+// Historical candles for the chart timeframe selector.
+//   GET /api/prices/history?symbol=BTC/USD&timeframe=1H
+app.get('/api/prices/history', async (req, res) => {
+    try {
+        const result = await getOhlc(req.query.symbol, req.query.timeframe);
+        if (!result.success) {
+            // Rate limiting is a transient upstream condition, not a bad request.
+            const status = result.rateLimited ? 503 : 400;
+            return res.status(status).json(result);
+        }
+        return res.json(result);
+    } catch (e) {
+        console.error('[Price] OHLC fetch failed:', e.message, 'requestId:', req.requestId);
+        return res.status(500).json({ success: false, message: 'Failed to fetch price history.', requestId: req.requestId });
     }
 });
 
@@ -1941,4 +2276,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, start };
+module.exports = { app, start, htsCreditError };

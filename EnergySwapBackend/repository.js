@@ -14,6 +14,12 @@ function mapOffer(row) {
         totalHbar: numeric(row.total_hbar),
         timestamp: new Date(row.created_at).toISOString(),
         status: row.status,
+        ...(row.settlement_network ? { settlementNetwork: row.settlement_network } : {}),
+        ...(row.settlement_asset ? { settlementAsset: row.settlement_asset } : {}),
+        ...(row.seller_address ? { sellerAddress: row.seller_address } : {}),
+        ...(row.price_per_kwh !== null && row.price_per_kwh !== undefined
+            ? { pricePerKWh: numeric(row.price_per_kwh) }
+            : {}),
     };
 }
 
@@ -64,9 +70,14 @@ function mapReading(row) {
 }
 
 async function createOffer(offer, targetPool = getPool()) {
+    // seller_address and price_per_kwh are NOT NULL after migration 003. They
+    // mirror prosumer_id / hbar_per_kwh on Hedera testnet, which is exactly how
+    // that migration backfilled existing rows.
     const result = await targetPool.query(
-        `INSERT INTO offers (id, prosumer_id, energy_amount_kwh, hbar_per_kwh, total_hbar, created_at, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'available')
+        `INSERT INTO offers (id, prosumer_id, energy_amount_kwh, hbar_per_kwh, total_hbar, created_at, status,
+                             settlement_network, settlement_asset, seller_address, price_per_kwh)
+         VALUES ($1, $2, $3, $4, $5, $6, 'available',
+                 $7, $8, $9, $10)
          RETURNING *`,
         [
             offer.id,
@@ -75,6 +86,10 @@ async function createOffer(offer, targetPool = getPool()) {
             offer.hbarPerKWh,
             offer.totalHbar,
             offer.timestamp,
+            offer.settlementNetwork || 'hedera-testnet',
+            offer.settlementAsset || 'HBAR',
+            offer.sellerAddress || offer.prosumerId,
+            offer.pricePerKWh ?? offer.hbarPerKWh,
         ],
     );
     return mapOffer(result.rows[0]);
@@ -278,6 +293,97 @@ async function checkDatabase(targetPool = getPool()) {
     await targetPool.query('SELECT 1');
 }
 
+// ─── IDENTITY BINDINGS ──────────────────────────────────────────────────────
+//
+// A row here caches an on-chain fact: that a Hedera account published an HCS
+// attestation naming an EVM address. The row is not the proof — the mirror node
+// is. Treat these as read-through helpers, and never authorise on a row alone.
+
+const mapBinding = (row) =>
+    row
+        ? {
+              id: row.id,
+              evmAddress: row.evm_address,
+              evmChainId: row.evm_chain_id,
+              hederaAccountId: row.hedera_account_id,
+              topicId: row.topic_id,
+              sequenceNumber: row.sequence_number === null ? null : Number(row.sequence_number),
+              consensusTimestamp: row.consensus_timestamp,
+              createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+          }
+        : null;
+
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-f]{40}$/;
+const HEDERA_ID_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+
+/**
+ * Record a verified binding.
+ *
+ * Re-binding the same Hedera account replaces the previous identity rather than
+ * failing: switching sign-in wallets is legitimate, and the UNIQUE constraint
+ * exists to prevent *simultaneous* identities, not successive ones.
+ *
+ * @param {{evmAddress: string, evmChainId?: number, hederaAccountId: string,
+ *          topicId: string, sequenceNumber?: number|null,
+ *          consensusTimestamp?: string|null}} binding
+ */
+async function saveIdentityBinding(binding, targetPool = getPool()) {
+    const evmAddress = String(binding.evmAddress || '').trim().toLowerCase();
+    const hederaAccountId = String(binding.hederaAccountId || '').trim();
+    const topicId = String(binding.topicId || '').trim();
+
+    if (!EVM_ADDRESS_PATTERN.test(evmAddress)) throw new Error('evmAddress must be a 20-byte hex EVM address.');
+    if (!HEDERA_ID_PATTERN.test(hederaAccountId)) throw new Error('hederaAccountId must be a Hedera account ID.');
+    if (!HEDERA_ID_PATTERN.test(topicId)) throw new Error('topicId must be a Hedera account ID.');
+
+    const result = await targetPool.query(
+        `INSERT INTO identity_bindings
+            (evm_address, evm_chain_id, hedera_account_id, topic_id, sequence_number, consensus_timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (hedera_account_id) DO UPDATE
+            SET evm_address = EXCLUDED.evm_address,
+                evm_chain_id = EXCLUDED.evm_chain_id,
+                topic_id = EXCLUDED.topic_id,
+                sequence_number = EXCLUDED.sequence_number,
+                consensus_timestamp = EXCLUDED.consensus_timestamp,
+                created_at = now()
+         RETURNING *`,
+        [
+            evmAddress,
+            Number(binding.evmChainId) || 1,
+            hederaAccountId,
+            topicId,
+            binding.sequenceNumber ?? null,
+            binding.consensusTimestamp ?? null,
+        ],
+    );
+    return mapBinding(result.rows[0]);
+}
+
+/** Find the binding for an EVM sign-in wallet, if any. */
+async function getIdentityBindingByEvm(evmAddress, targetPool = getPool()) {
+    const address = String(evmAddress || '').trim().toLowerCase();
+    if (!EVM_ADDRESS_PATTERN.test(address)) return null;
+    const result = await targetPool.query('SELECT * FROM identity_bindings WHERE evm_address = $1', [address]);
+    return mapBinding(result.rows[0]);
+}
+
+/** Find the binding for a Hedera settlement account, if any. */
+async function getIdentityBindingByHedera(hederaAccountId, targetPool = getPool()) {
+    const accountId = String(hederaAccountId || '').trim();
+    if (!HEDERA_ID_PATTERN.test(accountId)) return null;
+    const result = await targetPool.query('SELECT * FROM identity_bindings WHERE hedera_account_id = $1', [accountId]);
+    return mapBinding(result.rows[0]);
+}
+
+/** Remove a binding. Used when a user unlinks their sign-in wallet. */
+async function deleteIdentityBinding(evmAddress, targetPool = getPool()) {
+    const address = String(evmAddress || '').trim().toLowerCase();
+    if (!EVM_ADDRESS_PATTERN.test(address)) return false;
+    const result = await targetPool.query('DELETE FROM identity_bindings WHERE evm_address = $1', [address]);
+    return result.rowCount > 0;
+}
+
 async function importLegacyData(data, targetPool = getPool()) {
     const client = await targetPool.connect();
     const imported = { offers: 0, trades: 0, meterReadings: 0 };
@@ -376,4 +482,8 @@ module.exports = {
     recordTrade,
     reserveMeterReading,
     updateMeterReading,
+    saveIdentityBinding,
+    getIdentityBindingByEvm,
+    getIdentityBindingByHedera,
+    deleteIdentityBinding,
 };

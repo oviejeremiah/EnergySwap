@@ -57,6 +57,6 @@ test('validates TLS origins, PostgreSQL URLs, pool bounds, and oracle key type',
 test('applies local-only development CORS defaults and validates ports', () => {
     const config = loadConfig({ NODE_ENV: 'test' });
     assert.equal(config.port, 3000);
-    assert.ok(config.corsOrigins.includes('http://localhost:5173'));
+    assert.ok(config.corsOrigins.includes('http://localhost:4300'));
     assert.throws(() => loadConfig({ ...productionEnv, PORT: '70000' }), /PORT/);
 });
