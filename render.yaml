@@ -38,10 +38,16 @@ services:
           property: connectionString
       - key: CORS_ORIGINS
         sync: false
-      # Without this, production runs with offer posting unauthenticated:
-      # anyone could post an offer claiming any Hedera account as prosumerId.
-      # The cost is that posting requires a wallet signature, so confirm the
-      # client flow handles the extra prompt before enabling on a public host.
+      # Left unset, so requireWalletSignature is false and offer posting is
+      # UNAUTHENTICATED: anyone can post an offer claiming any Hedera account
+      # as prosumerId. That gap is real and still open.
+      #
+      # It cannot be closed by setting this to "true" yet. The API already
+      # enforces the signature, but the frontend has no challenge flow at all -
+      # post-offer sends only prosumerId, energyAmountKWh and hbarPerKWh, with
+      # no challengeNo or signature. Flipping this flag today would reject
+      # every offer from every user. The client flow has to be implemented
+      # first. Tracked in docs/REVIEW_LOG.md.
       - key: REQUIRE_WALLET_SIGNATURE
         sync: false
       - key: HCS_TOPIC_ID
