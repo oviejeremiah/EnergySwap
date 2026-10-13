@@ -23,6 +23,7 @@ import { Client, Hbar, LedgerId, TransactionId, TransferTransaction } from '@hie
 import 'websocket-polyfill';
 import { connectViaWalletConnect, watchSession } from './wallet-connect.js';
 import { isHederaAccount as isHederaAccountId, applyTradeGate, applySelectedOfferGate, isWithinOffer } from './trade-gate.js';
+import { signChallenge } from './wallet-signature.js';
 
 if (typeof window.global === 'undefined') {
     window.global = window;
@@ -1495,6 +1496,21 @@ document.addEventListener('DOMContentLoaded', () => {
                         prosumerId: connectedAccountId,
                         energyAmountKWh: energyVal,
                         hbarPerKWh: hbarPerVal,
+                        // Proof that the caller controls the Hedera account it is
+                        // claiming as the producer. Without this, anyone can post
+                        // an offer naming any account as the seller.
+                        //
+                        // Signed by the Hedera wallet itself rather than by the
+                        // EVM sign-in wallet: settlement happens on Hedera, so the
+                        // proof has to come from the account that would receive the
+                        // money. No private key is ever handled in the page.
+                        ...(await signChallenge({
+                            accountId: connectedAccountId,
+                            signer: dAppConnector?.signers.find(
+                                (item) => item.getAccountId().toString() === connectedAccountId,
+                            ),
+                            baseUrl: BACKEND_URL,
+                        })),
                     }),
                 });
                 if (!response.ok) throw new Error(`Failed to post offer: ${response.statusText}`);

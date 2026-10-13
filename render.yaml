@@ -38,18 +38,20 @@ services:
           property: connectionString
       - key: CORS_ORIGINS
         sync: false
-      # Left unset, so requireWalletSignature is false and offer posting is
-      # UNAUTHENTICATED: anyone can post an offer claiming any Hedera account
-      # as prosumerId. That gap is real and still open.
+      # Offer posting requires proof that the caller controls the Hedera account it
+      # claims as the producer. This closes an impersonation gap: without it,
+      # anyone could post an offer naming any account as the seller.
       #
-      # It cannot be closed by setting this to "true" yet. The API already
-      # enforces the signature, but the frontend has no challenge flow at all -
-      # post-offer sends only prosumerId, energyAmountKWh and hbarPerKWh, with
-      # no challengeNo or signature. Flipping this flag today would reject
-      # every offer from every user. The client flow has to be implemented
-      # first. Tracked in docs/REVIEW_LOG.md.
+      # Enabled now because the client half exists. src/wallet-signature.js
+      # requests a challenge from the API and has the Hedera wallet sign it via
+      # HIP-32 signer.sign() - the same signer that already signs the HBAR
+      # transfer - so no private key is ever handled in the page.
+      #
+      # A user whose wallet cannot sign HIP-32 messages will be unable to post
+      # an offer. That is the intended trade-off: refusing those posts is
+      # correct, accepting them unauthenticated is not.
       - key: REQUIRE_WALLET_SIGNATURE
-        sync: false
+        value: "true"
       - key: HCS_TOPIC_ID
         sync: false
       - key: ENERGY_TOKEN_ID

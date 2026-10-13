@@ -135,6 +135,60 @@ removed — verified by mutation, not by assertion count.
 
 ---
 
+## 2026-10-13 — Closing the unauthenticated write path
+
+**The gap.** Anyone could `POST /api/post-offer` claiming any Hedera account as
+the producer. The backend has always been able to enforce a signature — it
+looks the account's key up on the mirror node and verifies against it — but the
+frontend had no client half, so `REQUIRE_WALLET_SIGNATURE` could not be enabled
+without breaking every user. The flag was therefore left `sync: false`, which
+looked like a decision and was an unresolved gap.
+
+**The design question that mattered.** The server verifies a *Hedera* signature,
+and the app's sign-in wallet is an EVM wallet that deliberately holds nothing.
+The naive fix is to paste a Hedera private key into a form. That was rejected.
+
+The app already holds a **Hedera WalletConnect signer** — `dAppConnector.signers`,
+used to sign the HBAR transfer — and the SDK's `Signer` interface exposes
+HIP-32 `sign(messages)`. So the proof comes from the Hedera wallet itself, over
+a server-issued challenge, with **no private key ever handled in the page**.
+Signing in with a compromised EVM wallet still yields nothing.
+
+**Implementation.** `src/wallet-signature.js`, written test-first. It requests a
+challenge from `/api/wallet-auth/challenge`, signs the exact message the server
+issued (UTF-8, no reformatting), and returns `challengeNonce` /
+`challengeSignature` — the exact field names `server.js` reads.
+
+9 tests, covering the signer-account mismatch guard, a missing nonce or message,
+a rejected wallet prompt, a wallet that returns nothing, and UTF-8 byte
+fidelity.
+
+`render.yaml` now sets `REQUIRE_WALLET_SIGNATURE: "true"`. **Trade-off stated
+plainly:** a user whose wallet cannot sign HIP-32 messages will be unable to
+post an offer. Refusing those posts is correct; accepting them unauthenticated
+is not.
+
+**Verification status.** The client module is unit-tested and the backend
+enforcement is covered (`a failed wallet signature refuses the offer, a valid
+one accepts it`). The two halves have **not yet been exercised together against
+a real wallet** — that requires the funded account, and no trade has run.
+
+## 2026-10-13 — Why no trade had ever completed
+
+The account `0.0.10855100` holds **zero HBAR** — confirmed against the mirror
+node, where `balance` is omitted entirely rather than returned as 0.
+
+That was a real cause and **not the only one**. An independent review found that
+`recordTrade`'s INSERT omitted four `NOT NULL` columns added by migration 003,
+so no trade could have been recorded even with funds. Funding the account was
+necessary and would not have been sufficient.
+
+Both are now fixed. **The path has still never run end to end**, which is the
+honest position: a path that has executed zero times is where remaining defects
+live, and Stage 0 of the launch plan treats this as the highest-variance gate.
+
+---
+
 ## 2026-10-13 — First review cycle
 
 **Scope.** The 44-file working tree held in checkpoint `a80d13b`: operator-key
