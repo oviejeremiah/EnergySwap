@@ -68,6 +68,59 @@ test('verifyChallenge rejects when no challenge was issued', async () => {
     assert.match(result.reason, /No active challenge for this account/);
 });
 
+test('the signing window is enforced, not merely configured', async () => {
+    // WALLET_SIGNATURE_MAX_AGE_MS looked like it tightened the signing window
+    // and did nothing: the check read `record.createdAt`, but issueChallenge has
+    // only ever stored `issuedAt`. So `record.createdAt` was undefined,
+    // `now - undefined` was NaN, and `NaN > maxAgeMs` was always false. The
+    // check could never reject anything and no test covered it.
+    //
+    // A zero-millisecond window makes the challenge instantly too old, so it is
+    // refused by the age check rather than passing through to signature
+    // verification. That distinction is what makes this a real assertion.
+    const { nonce } = issueChallenge(ACCOUNT, 'testnet');
+    // Let real time pass. With a zero-millisecond window and no elapsed time the
+    // comparison is `0 > 0`, which is false, so the check would not fire and the
+    // test would pass for the wrong reason.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const result = await verifyChallenge({
+        accountId: ACCOUNT,
+        nonce,
+        signature: 'AAAA',
+        mirrorNodeUrl: MIRROR,
+        expectedNetwork: 'testnet',
+        maxAgeMs: 0,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(
+        result.reason,
+        /older than the accepted signing window/,
+        'a zero-length signing window must refuse the challenge',
+    );
+});
+
+test('a generous signing window still accepts a fresh challenge', async () => {
+    // The counterpart to the test above, so the assertion cannot be satisfied
+    // simply by refusing everything.
+    const { nonce } = issueChallenge(ACCOUNT, 'testnet');
+    const result = await verifyChallenge({
+        accountId: ACCOUNT,
+        nonce,
+        signature: 'AAAA',
+        mirrorNodeUrl: MIRROR,
+        expectedNetwork: 'testnet',
+        maxAgeMs: 60_000,
+    });
+
+    assert.doesNotMatch(
+        result.reason ?? '',
+        /older than the accepted signing window/,
+        'a fresh challenge must not be refused for age',
+    );
+});
+
 test('verifyChallenge rejects a nonce issued for a different account', async () => {
     const challenge = issueChallenge(ACCOUNT, 'testnet');
     const result = await verifyChallenge({

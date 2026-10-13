@@ -9,6 +9,132 @@ secure or correct — see "What remains unproven" in the newest entry.
 
 ---
 
+## 2026-10-13 — QA verification of the first review cycle
+
+**Why.** The first cycle's evidence was mostly self-assessed. QA was asked to
+mutation-test it: revert each fix, confirm the new test fails, restore.
+
+**Headline: 7 of 14 mutations survived.** Four were real gaps in the previous
+cycle's evidence. Two were fixes described as working that were not. One was a
+test file that guarded nothing at all.
+
+### Mutations that survived, and what they meant
+
+| Mutation | Survived? | Meaning |
+|---|---|---|
+| Delete `gateway/gateway.js` entirely | 10/10 tests pass | **The journal tests tested nothing** |
+| Remove displacement CTE | 0 fail | The CTE was already inert |
+| Remove the max-age check | 0 fail | The check was already inert |
+| Remove `verifyUnlinkChallenge` from the route | 11 tests pass | Helper covered, wiring uncovered |
+
+Every other mutation — payer check, tokenId check, fail-closed-on-unconfigured,
+the 14-column INSERT, kWh ceiling, journal collapse, atomic compaction, mirror
+timeout, nonce ceiling, frontend gate — **was caught**. Those fixes hold.
+
+### Defects found and fixed
+
+**F1 — `axios` was an undeclared backend dependency. The production API could
+not boot.** `priceService.js` required it; it was declared only in the *root*
+`package.json`. `render.yaml` uses `rootDir: EnergySwapBackend` with
+`npm ci`, and CI does the same with `working-directory: EnergySwapBackend` —
+neither populates the root `node_modules`. Locally the root install masked it,
+which is exactly why "the service was answering on :3000" proved nothing.
+Pinned to the root's installed version to avoid a split, and re-verified with
+the root copy hidden. **A redeploy is required.**
+
+**F2 — `gateway-journal.test.js` reimplemented the helpers it was testing.**
+Corrected with `test/gateway-journal-recovery.test.js`, which loads the real
+module.
+
+**F3 — the unlink authorisation was uncovered at the route.** Added.
+
+**F4 — the displacement CTE never displaced anything.** PostgreSQL gives every
+data-modifying CTE in a statement one snapshot, so the unique index still saw
+the row being deleted and the INSERT failed with 23505. A user who had bound a
+wallet to account A could not move to account B at all. The 1:1 property held
+(the index enforced it), but the intended behaviour did not. Now a real DELETE
+in a transaction, so a failed INSERT cannot leave the user with no binding at
+all. **The comment and the previous log entry were both wrong.**
+
+**F5 — `WALLET_SIGNATURE_MAX_AGE_MS` did nothing.** The check read
+`record.createdAt`; `issueChallenge` has only ever stored `issuedAt`. So the
+comparison was `NaN > n`, always false. Setting the variable appeared to tighten
+the signing window and changed nothing. The 5-minute `expiresAt` check was the
+only bound actually in force — so this was dead configuration, not an open door.
+
+**F6 — encoding damage the previous entry claimed was gone.** One mangled em
+dash in `vite.config.js`. A BOM sweep does not detect this class of damage.
+
+**F7 — CI was red on two counts.** `axios` (F1), and the frontend job ran
+`npm run build` with no `VITE_BACKEND_API_URL` — so the project's own build
+guard failed the build. Both fixed. **Whether Actions is now green is
+unverified; it cannot be run from here.**
+
+### Still open after QA
+
+- **No read rate limiter** on `/api/news`, `/api/news/status`, `/api/hbar-price`,
+  `/api/prices`, `/api/prices/history`. A news cache miss fans out to roughly
+  15–20 outbound requests from the deployment's IP. Exhausting CoinGecko
+  degrades the price that `recordTrade` awaits, which then falls back to a stale
+  value — trades still record, with wrong USD figures.
+- **Offer posting remains unauthenticated**, now pinned by tests in both states.
+  Still cannot be closed by flipping `REQUIRE_WALLET_SIGNATURE`, because the
+  frontend sends no signature.
+- **No HBAR balance pre-check.** `walletBalanceDisplay` is bound and captured in
+  `main.js` but never read. Not a money risk — Hedera rejects an unfunded
+  transfer atomically — but it is avoidable friction.
+- **`settlement-verification.js`** (230 lines) still dead while `mapOffer`
+  advertises settlement fields nothing verifies.
+- **Identity attestations** still share the meter topic with a 25-message window.
+- **`'browsing'` sentinel**, `confirmTradeBtn.disabled` still flipped outside the
+  gate, `postgres.integration.test.js` still never runs.
+
+### What QA could not verify
+
+- Whether GitHub Actions passes end to end.
+- Whether the Render service is up, or whether a redeploy from this commit is
+  the first time the API would boot in a clean environment. Given F1, that is
+  unknown either way.
+- Render's production database, and whether migration 005 is applied there.
+- Rate-limiter behaviour behind Render's proxy.
+- **Any end-to-end trade.** The four named scenarios are proven at the server's
+  decision boundary — not against a live ledger. No HBAR has moved.
+- That the `main.js` refactor is behaviour-neutral. Verified by review: the
+  extracted regex and all user-facing strings are byte-identical to the
+  originals. Build passes. There is still no browser-level test.
+- `scan-static.ps1` reporting 0 findings. Calibration caught 1 of 5 planted
+  bugs and **missed F1 entirely**. It is not evidence of security.
+
+### Current verification state
+
+| Check | Result |
+|---|---|
+| `npm test` (backend) | **125 tests, 124 pass, 0 fail, 1 skipped** |
+| `npx vitest run` (frontend) | **17 pass** (was 0 tests, no runner) |
+| `scan-static.ps1` | 0 findings; calibration 1 of 5 |
+| Frontend prod build, env vars set | passes |
+| Frontend prod build, env vars unset | exits 1 with the guard message |
+| Secrets sweep, tracked files | clean |
+| `setOperator` sweep | `gateway/` and `legacy-operator/` only |
+
+### The four named scenarios
+
+All four are blocked, each pinned by a test proven to fail when its guard is
+removed — verified by mutation, not by assertion count.
+
+1. **Incorrect identity binding** — blocked by the payer check in
+   `verifyBinding`. Removing it fails 3 tests, including a route-level one.
+2. **Insufficient funds** — blocked server-side by six amount, receipt, payer and
+   memo checks, each refusing before `recordTrade` is reached. Absent on the
+   client: no balance pre-check exists anywhere.
+3. **Failed signature** — blocked. `wallet-auth.js` covers Ed25519 and ECDSA;
+   unlink EIP-191 is covered at function *and* route level; the route now has a
+   test pinning the unauthenticated default, so flipping the flag is deliberate.
+4. **Replayed request** — blocked and idempotent. Three identical POSTs call
+   `recordTrade` once, debit the offer once, and return 200 each time.
+
+---
+
 ## 2026-10-13 — First review cycle
 
 **Scope.** The 44-file working tree held in checkpoint `a80d13b`: operator-key
@@ -90,6 +216,11 @@ being unlinked. Nonce is address-scoped, single-use, and expires in 10 minutes.
 `ethers` was added to the backend as a direct dependency — it previously had no
 signature library at all. 11 tests in `test/unlink-authorisation.test.js`.
 
+> **Corrected by QA (2026-10-13).** Those 11 tests call the helper directly
+> and never touch the route. Removing `verifyUnlinkChallenge` from the DELETE
+> handler left all 11 green — the authorisation was unguarded at the wiring
+> level. A route-level test now covers it.
+
 #### F4 — Dead unique-violation handler turned replays into 500s · **MEDIUM**
 
 The handler matched `trades_transaction_id_key`, but migration 003 had renamed
@@ -131,6 +262,15 @@ on chain with no platform record — reconcilable only by hand.
 collapses duplicate entries by `readingId` keeping the most complete, and
 compaction is now atomic (temp file plus rename) so a crash mid-truncate cannot
 destroy other pending entries. 7 tests in `test/gateway-journal.test.js`.
+
+> **Corrected by QA (2026-10-13).** Those 7 tests guarded nothing. They
+> reimplemented `append`/`read`/`compact` locally and asserted on their own
+> copies, because the real helpers are module-private. Deleting
+> `gateway/gateway.js` entirely — 309 lines, the only component holding signing
+> keys — left all 10 gateway tests passing. The fix itself was real; the
+> evidence for it was not. `test/gateway-journal-recovery.test.js` now loads the
+> real module, and reverting either the duplicate-collapse or the atomic
+> compaction fails it.
 
 #### F7 — Unbounded nonce stores and an unbounded mirror-node call · **MEDIUM**
 
@@ -263,8 +403,11 @@ successes would hide.
    the global lessons file.
 
 3. **Two files were corrupted by a PowerShell text round-trip**, introducing a
-   UTF-8 BOM. Caught by a BOM sweep over all changed files and stripped. No
-   lossy encoding damage remains.
+   UTF-8 BOM. Caught by a BOM sweep over all changed files and stripped. That
+   sweep only looked for BOMs, which is not the same as checking for damage —
+   it missed an em dash in `vite.config.js` that had been mangled by an earlier
+   UTF-8 to CP1252 round trip and survived the fix. Repaired during QA, and the
+   tree swept for the mojibake byte signatures rather than just BOMs.
 
 4. **A test passed for the wrong reason.** The unlink tests asserted wallet
    addresses that `new Wallet(privateKey)` does not produce, so every

@@ -3,7 +3,7 @@ import { defineConfig, loadEnv } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 
 export default defineConfig(({ mode }) => {
-    // `.env.local` is not in process.env when this file runs â€” Vite only
+    // `.env.local` is not in process.env when this file runs — Vite only
     // surfaces it to client code via import.meta.env. loadEnv is what makes the
     // guards below see locally-configured values, and what a deploy platform
     // populates into the real environment.

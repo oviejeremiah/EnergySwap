@@ -170,7 +170,14 @@ async function verifyChallenge({
     if (record.expiresAt <= now) {
         return { ok: false, reason: 'Challenge expired. Request a new one.' };
     }
-    if (now - record.createdAt > maxAgeMs) {
+    // `issuedAt`, not `createdAt`. The stored record has only ever carried
+    // `issuedAt` (see issueChallenge), so `record.createdAt` was undefined,
+    // `now - undefined` was NaN, and `NaN > maxAgeMs` was always false - this
+    // check could never reject anything. WALLET_SIGNATURE_MAX_AGE_MS was
+    // therefore dead configuration: setting it appeared to tighten the signing
+    // window and did nothing. The 5-minute expiresAt check above was the only
+    // bound actually in force.
+    if (now - record.issuedAt > maxAgeMs) {
         return { ok: false, reason: 'Challenge is older than the accepted signing window.' };
     }
     if (record.network !== expectedNetwork) {

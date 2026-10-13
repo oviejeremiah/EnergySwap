@@ -378,36 +378,55 @@ async function saveIdentityBinding(binding, targetPool = getPool()) {
     if (!HEDERA_ID_PATTERN.test(hederaAccountId)) throw new Error('hederaAccountId must be a Hedera account ID.');
     if (!HEDERA_ID_PATTERN.test(topicId)) throw new Error('topicId must be a Hedera account ID.');
 
-    const result = await targetPool.query(
-        `WITH displaced AS (
-             -- The same identity moving to a different settlement account.
-             -- Without this the insert would violate the unique index on
-             -- evm_address, or worse, leave the old row in place and appear to
-             -- succeed. Delete first so the relation is genuinely 1:1.
-             DELETE FROM identity_bindings
-             WHERE evm_address = $1 AND hedera_account_id <> $3
-         )
-         INSERT INTO identity_bindings
-            (evm_address, evm_chain_id, hedera_account_id, topic_id, sequence_number, consensus_timestamp)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (hedera_account_id) DO UPDATE
-            SET evm_address = EXCLUDED.evm_address,
-                evm_chain_id = EXCLUDED.evm_chain_id,
-                topic_id = EXCLUDED.topic_id,
-                sequence_number = EXCLUDED.sequence_number,
-                consensus_timestamp = EXCLUDED.consensus_timestamp,
-                created_at = now()
-         RETURNING *`,
-        [
+    // Displacement has to be its own statement, inside a transaction.
+    //
+    // An earlier version used a data-modifying CTE - `WITH displaced AS
+    // (DELETE ...) INSERT ...` - believing the DELETE would run first. It does
+    // not: PostgreSQL gives every CTE in a statement the same snapshot, so the
+    // unique index on evm_address still saw the row being deleted and the
+    // INSERT failed with 23505. The prior binding survived and the statement
+    // aborted, so a user who had bound a wallet to account A could not move to
+    // account B at all - while a new EVM claiming an already-bound Hedera
+    // account still displaced the old identity through ON CONFLICT.
+    //
+    // A transaction is what makes this safe: without it, a failed INSERT would
+    // leave the user with no binding at all, which is worse than either state.
+    const client = await targetPool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM identity_bindings WHERE evm_address = $1 AND hedera_account_id <> $2', [
             evmAddress,
-            Number(binding.evmChainId) || 1,
             hederaAccountId,
-            topicId,
-            binding.sequenceNumber ?? null,
-            binding.consensusTimestamp ?? null,
-        ],
-    );
-    return mapBinding(result.rows[0]);
+        ]);
+        const result = await client.query(
+            `INSERT INTO identity_bindings
+                (evm_address, evm_chain_id, hedera_account_id, topic_id, sequence_number, consensus_timestamp)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (hedera_account_id) DO UPDATE
+                SET evm_address = EXCLUDED.evm_address,
+                    evm_chain_id = EXCLUDED.evm_chain_id,
+                    topic_id = EXCLUDED.topic_id,
+                    sequence_number = EXCLUDED.sequence_number,
+                    consensus_timestamp = EXCLUDED.consensus_timestamp,
+                    created_at = now()
+             RETURNING *`,
+            [
+                evmAddress,
+                Number(binding.evmChainId) || 1,
+                hederaAccountId,
+                topicId,
+                binding.sequenceNumber ?? null,
+                binding.consensusTimestamp ?? null,
+            ],
+        );
+        await client.query('COMMIT');
+        return mapBinding(result.rows[0]);
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 /** Find the binding for an EVM sign-in wallet, if any. */

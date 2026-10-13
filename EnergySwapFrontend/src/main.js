@@ -22,6 +22,7 @@ const loadHederaConnector = async () => {
 import { Client, Hbar, LedgerId, TransactionId, TransferTransaction } from '@hiero-ledger/sdk';
 import 'websocket-polyfill';
 import { connectViaWalletConnect, watchSession } from './wallet-connect.js';
+import { isHederaAccount as isHederaAccountId, applyTradeGate, applySelectedOfferGate, isWithinOffer } from './trade-gate.js';
 
 if (typeof window.global === 'undefined') {
     window.global = window;
@@ -512,8 +513,11 @@ const showRoleSelection = () => {
  * The API enforces this too (isHederaAccountId in server.js); doing it here
  * lets the UI explain the rule immediately instead of surfacing a raw 400
  * after the user has filled in the whole form.
+ *
+ * The rule itself lives in trade-gate.js so it can be tested without a browser;
+ * this alias keeps every existing call site unchanged.
  */
-const isHederaAccount = (value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value.trim());
+const isHederaAccount = isHederaAccountId;
 
 /** User-facing explanation shown when a non-Hedera wallet connects. */
 const NON_HEDERA_MESSAGE =
@@ -575,24 +579,13 @@ const showDashboard = () => {
  * click, which reads as a broken app rather than a deliberate rule.
  */
 const updateTradeGate = () => {
-    const canTrade = isHederaAccount(connectedAccountId);
-
-    const postBtn = document.querySelector('#offer-form button[type="submit"]');
-    if (postBtn) {
-        postBtn.disabled = !canTrade;
-        postBtn.title = canTrade ? '' : 'Connect a Hedera account to post an offer';
-        postBtn.textContent = canTrade ? 'Post Energy Offer to Hedera' : 'Hedera account required to post';
-    }
-
-    // Only override the trade button while no offer is chosen: selectOffer owns
-    // its label and enabled state once a selection exists.
-    if (confirmTradeBtn && !selectedOffer) {
-        confirmTradeBtn.disabled = !canTrade;
-        confirmTradeBtn.title = canTrade ? '' : 'Connect a Hedera account to buy energy';
-        confirmTradeBtn.textContent = canTrade ? 'Execute Trade' : 'Hedera account required to trade';
-    }
-
-    return canTrade;
+    return applyTradeGate(
+        {
+            postButton: document.querySelector('#offer-form button[type="submit"]'),
+            tradeButton: confirmTradeBtn,
+        },
+        { connectedAccountId, selectedOffer },
+    );
 };
 
 // ──────────────────────── UI UPDATE ───────────────────────────
@@ -1000,10 +993,7 @@ const selectOffer = (offerId) => {
     if (confirmTradeBtn) {
         // Respect the settlement gate: selecting an offer must not re-enable a
         // button that cannot work without a Hedera account.
-        const canTrade = isHederaAccount(connectedAccountId);
-        confirmTradeBtn.disabled = !canTrade;
-        confirmTradeBtn.textContent = canTrade ? 'Execute Trade' : 'Hedera account required to trade';
-        confirmTradeBtn.title = canTrade ? '' : 'Connect a Hedera account to buy energy';
+        applySelectedOfferGate({ tradeButton: confirmTradeBtn }, { connectedAccountId });
     }
 
     const setEl = (id, val) => {
@@ -1037,12 +1027,7 @@ const selectOffer = (offerId) => {
 // ────────────────────── EXECUTE TRADE ─────────────────────────
 const executeTrade = async () => {
     const energyAmountKWh = parseFloat(kwhReceiveInput?.value);
-    if (
-        !selectedOffer ||
-        !Number.isFinite(energyAmountKWh) ||
-        energyAmountKWh <= 0 ||
-        energyAmountKWh > selectedOffer.energyAmountKWh
-    ) {
+    if (!isWithinOffer(energyAmountKWh, selectedOffer)) {
         setStatus('Please select an offer and enter a kWh amount within the available energy.', true);
         return;
     }

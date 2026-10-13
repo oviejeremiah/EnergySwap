@@ -57,5 +57,15 @@ jobs:
           cache-dependency-path: EnergySwapFrontend/package-lock.json
       - run: npm ci
         working-directory: EnergySwapFrontend
+      - run: npm test
+        working-directory: EnergySwapFrontend
+      # vite.config.js refuses to build a production bundle without these two,
+      # because the fallback is http://localhost:3000 - every API call from
+      # every visitor would go to their own machine while the deploy reported
+      # success. Placeholders here only satisfy the guard; the guard firing is
+      # what this step is proving does not happen for no reason.
       - run: npm run build
         working-directory: EnergySwapFrontend
+        env:
+          VITE_BACKEND_API_URL: https://ci-placeholder.invalid
+          VITE_WALLETCONNECT_PROJECT_ID: ci-placeholder

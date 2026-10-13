@@ -136,17 +136,89 @@ describe('recordTrade persists against the real schema', async (t) => {
             pool,
         );
 
-        // Same wallet, different settlement account. The unique index must
-        // refuse this rather than letting one identity hold several accounts.
-        await assert.rejects(
-            () =>
-                repository.saveIdentityBinding(
-                    { evmAddress: evm, hederaAccountId: '0.0.6242666', topicId: '0.0.6242998' },
-                    pool,
-                ),
-            /identity_bindings_evm_unique|duplicate key/,
-            'one wallet must not be able to hold two settlement accounts',
+        // A second account for the same wallet must never coexist with the
+        // first. It is not rejected - a wallet is allowed to move to another
+        // settlement account, provided it can prove on-chain ownership, which
+        // the caller of this function has already done. So the invariant is
+        // "exactly one row survives", not "the write is refused". Asserting a
+        // throw here would have hidden the broken-displacement bug.
+        await repository.saveIdentityBinding(
+            { evmAddress: evm, hederaAccountId: '0.0.6242666', topicId: '0.0.6242998' },
+            pool,
         );
+
+        const rows = await pool.query('SELECT hedera_account_id FROM identity_bindings WHERE evm_address = $1', [
+            evm,
+        ]);
+        assert.equal(rows.rows.length, 1, 'one wallet must never hold two settlement accounts');
+
+        await pool.query('DELETE FROM identity_bindings WHERE evm_address = $1', [evm]);
+    });
+
+    await t.test('moving an identity to another settlement account displaces the old row', async () => {
+        // The mutation that motivated this: the displacement was written as a
+        // data-modifying CTE, `WITH displaced AS (DELETE ...) INSERT ...`. Every
+        // CTE in a statement shares one snapshot, so the unique index still
+        // saw the row being deleted, the INSERT failed with 23505, and the old
+        // binding survived untouched. A test that only checks the constraint is
+        // REJECTED cannot tell that apart from a working displacement - it needs
+        // to assert the move actually succeeds and the old row is gone.
+        const evm = '0xfee1000000000000000000000000000000000000';
+
+        await pool.query('DELETE FROM identity_bindings WHERE evm_address = $1', [evm]);
+
+        await repository.saveIdentityBinding(
+            { evmAddress: evm, hederaAccountId: '0.0.6242777', topicId: '0.0.6242998' },
+            pool,
+        );
+
+        // The same wallet moving to a different settlement account.
+        const moved = await repository.saveIdentityBinding(
+            { evmAddress: evm, hederaAccountId: '0.0.6242555', topicId: '0.0.6242998' },
+            pool,
+        );
+        assert.equal(moved.hederaAccountId, '0.0.6242555', 'the move must succeed, not throw');
+
+        const rows = await pool.query('SELECT hedera_account_id FROM identity_bindings WHERE evm_address = $1', [
+            evm,
+        ]);
+        assert.equal(rows.rows.length, 1, 'exactly one row remains for the identity');
+        assert.equal(
+            rows.rows[0].hedera_account_id,
+            '0.0.6242555',
+            'the displaced account must be gone, not merely shadowed',
+        );
+
+        await pool.query('DELETE FROM identity_bindings WHERE evm_address = $1', [evm]);
+    });
+
+    await t.test('a failed insert does not silently drop the existing binding', async () => {
+        // The DELETE and INSERT share a transaction precisely so that a failure
+        // between them cannot leave the user with no binding at all - a worse
+        // outcome than either binding being present.
+        const evm = '0xfee2000000000000000000000000000000000000';
+
+        await pool.query('DELETE FROM identity_bindings WHERE evm_address = $1', [evm]);
+        await repository.saveIdentityBinding(
+            { evmAddress: evm, hederaAccountId: '0.0.6242444', topicId: '0.0.6242998' },
+            pool,
+        );
+
+        // An invalid topic id is rejected by validation before any statement
+        // runs, so the original binding must be untouched.
+        await assert.rejects(() =>
+            repository.saveIdentityBinding(
+                { evmAddress: evm, hederaAccountId: '0.0.6242333', topicId: 'not-a-topic' },
+                pool,
+            ),
+        );
+
+        const survivors = await pool.query(
+            'SELECT hedera_account_id FROM identity_bindings WHERE evm_address = $1',
+            [evm],
+        );
+        assert.equal(survivors.rows.length, 1, 'the original binding must survive a rejected move');
+        assert.equal(survivors.rows[0].hedera_account_id, '0.0.6242444');
 
         await pool.query('DELETE FROM identity_bindings WHERE evm_address = $1', [evm]);
     });
