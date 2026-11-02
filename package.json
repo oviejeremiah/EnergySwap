@@ -17,5 +17,8 @@
   "description": "Hedera-based peer-to-peer energy trading prototype",
   "devDependencies": {
     "concurrently": "^10.0.5"
+  },
+  "overrides": {
+    "shell-quote": ">=1.12.0"
   }
 }
