@@ -23,7 +23,10 @@ import { Client, Hbar, LedgerId, TransactionId, TransferTransaction } from '@hie
 import 'websocket-polyfill';
 import { connectViaWalletConnect, watchSession } from './wallet-connect.js';
 import { isHederaAccount as isHederaAccountId, applyTradeGate, applySelectedOfferGate, isWithinOffer } from './trade-gate.js';
-import { signChallenge } from './wallet-signature.js';
+import { proveAccountControl, defaultClientFor, resolvePlatformNetwork } from './wallet-signature.js';
+import { describeApiError } from './api-error.js';
+import { hashPackInstallMessage } from './status-message.js';
+import { findAvailableExtension } from './extension-detect.js';
 
 if (typeof window.global === 'undefined') {
     window.global = window;
@@ -44,7 +47,6 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:30
 // scope so it exists before the inline script's DOMContentLoaded handler runs.
 window.__ENERGYSWAP_API_BASE__ = BACKEND_URL;
 const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '3bb8070d3c128e28471c850ee21f3978';
-const HASHPACK_INSTALL_URL = 'https://www.hashpack.app/';
 
 const appMetadata = {
     name: 'Hedera P2P EnergySwap',
@@ -96,11 +98,16 @@ let accountInfoDiv,
     roleBadge;
 
 // ────────────────────────── STATUS ────────────────────────────
-const setStatus = (message, isError = false) => {
+// `persistent` keeps the box open instead of hiding it after 6 s. Messages
+// that contain an action the user must take (e.g. installing HashPack) need
+// this: the auto-hide covered only the message, NOT the reason it appeared,
+// and a zero-size message that still fills the DOM is worse than none.
+const setStatus = (message, isError = false, persistent = false) => {
     [statusDiv, document.getElementById('role-status')].forEach((el) => {
         if (!el) return;
         el.innerHTML = message;
         el.className = `status-box show ${isError ? 'error' : 'success'}`;
+        if (persistent) return;
         setTimeout(() => {
             if (el) el.className = 'status-box';
         }, 6000);
@@ -690,10 +697,6 @@ const initializeWalletConnect = async () => {
     return _wcInitPromise;
 };
 
-const getHashPackInstallMessage = () => {
-    return `HashPack is required for EnergySwap. Install the browser extension from <a href="${HASHPACK_INSTALL_URL}" target="_blank" rel="noopener noreferrer">HashPack</a>, create a Hedera testnet account, and then select your role again.`;
-};
-
 // — ANY-WALLET IDENTITY (extension or phone) —
 //
 // This is the sign-in path, and it is separate from the Hedera settlement path
@@ -770,39 +773,69 @@ const disconnectIdentity = async () => {
 };
 
 const connectWithRole = async (role) => {
-    selectedRole = role;
-    await initializeWalletConnect();
-
-    // If already connected from a previous session, just re-render
-    if (connectedAccountId) {
-        updateUI();
-        return;
-    }
-
-    const installedExtension = dAppConnector?.extensions.find((extension) => extension.available);
-    if (!installedExtension) {
-        selectedRole = null;
-        setStatus(getHashPackInstallMessage(), true);
-        return;
-    }
-
-    setStatus(`Connecting to ${installedExtension.name || 'Hedera wallet'}...`, false);
+    if (connectingRole) return;
+    connectingRole = true;
     try {
-        await dAppConnector.connectExtension(installedExtension.id);
+        selectedRole = role;
+        // Feedback BEFORE anything slow starts. The first click used to be
+        // silent for the whole WalletConnect init (module import + relay
+        // handshake), which read as a dead button and pushed users into a
+        // second click whose "Connecting..." message then appeared instantly.
+        setStatus('Preparing Hedera connection...', false, true);
+        await initializeWalletConnect();
 
-        // Use the account returned by the installed wallet extension.
-        if (dAppConnector.signers.length > 0) {
-            connectedAccountId = dAppConnector.signers[0].getAccountId().toString();
+        // If already connected from a previous session, just re-render
+        if (connectedAccountId) {
             updateUI();
-        } else {
-            setStatus('Wallet connection was not completed.', true);
+            return;
+        }
+
+        let installedExtension = dAppConnector?.extensions.find((extension) => extension.available);
+        if (!installedExtension) {
+            // The discovery ping is one-shot (200 ms after the connector was
+            // constructed) and can lose the race against WalletConnect init
+            // when HashPack's MV3 service worker is asleep. Rather than wrongly
+            // telling an installed wallet to install itself, poll briefly and
+            // keep re-pinging until it announces — or give up honestly.
+            setStatus('Looking for a Hedera wallet extension...', false, true);
+            const waitStart = performance.now();
+            installedExtension = await findAvailableExtension({
+                connector: dAppConnector,
+                timeoutMs: 4000,
+                intervalMs: 400,
+            });
+            console.info(`[EnergySwap] extension search took ${Math.round(performance.now() - waitStart)} ms); ` +
+                `${dAppConnector?.extensions?.length ?? 0} extension(s) seen after it`);
+        }
+        if (!installedExtension) {
+            selectedRole = null;
+            setStatus(hashPackInstallMessage(), true, true);
+            return;
+        }
+
+        setStatus(`Connecting to ${installedExtension.name || 'Hedera wallet'}...`, false);
+        try {
+            await dAppConnector.connectExtension(installedExtension.id);
+
+            // Use the account returned by the installed wallet extension.
+            if (dAppConnector.signers.length > 0) {
+                connectedAccountId = dAppConnector.signers[0].getAccountId().toString();
+                updateUI();
+            } else {
+                setStatus('Wallet connection was not completed.', true);
+                selectedRole = null;
+            }
+        } catch (error) {
+            setStatus(`Failed to connect wallet: ${error.message}`, true);
             selectedRole = null;
         }
-    } catch (error) {
-        setStatus(`Failed to connect wallet: ${error.message}`, true);
-        selectedRole = null;
+    } finally {
+        connectingRole = false;
     }
 };
+
+/** Prevents an impatient second click from opening the wallet prompt twice. */
+let connectingRole = false;
 
 const disconnectWallet = async () => {
     if (dAppConnector) {
@@ -1046,7 +1079,9 @@ const executeTrade = async () => {
     }
     setStatus('Review and sign the HBAR transfer in your wallet. Your account pays the network fee.', false);
 
-    const client = Client.forTestnet();
+    // Built for the network the platform is actually on, not a hardcoded one.
+    // Testnet today; mainnet after migration, with no change here.
+    const client = defaultClientFor(await resolvePlatformNetwork({ baseUrl: BACKEND_URL }));
     let confirmedTransactionId = null;
     try {
         const signer = dAppConnector?.signers.find((item) => item.getAccountId().toString() === connectedAccountId);
@@ -1500,11 +1535,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         // claiming as the producer. Without this, anyone can post
                         // an offer naming any account as the seller.
                         //
-                        // Signed by the Hedera wallet itself rather than by the
-                        // EVM sign-in wallet: settlement happens on Hedera, so the
-                        // proof has to come from the account that would receive the
-                        // money. No private key is ever handled in the page.
-                        ...(await signChallenge({
+                        // Proven by a transaction the account signs and pays for,
+                        // carrying a server-issued nonce, which the server reads
+                        // back from the network. No private key is handled here,
+                        // and the flow is identical on testnet and mainnet.
+                        ...(await proveAccountControl({
                             accountId: connectedAccountId,
                             signer: dAppConnector?.signers.find(
                                 (item) => item.getAccountId().toString() === connectedAccountId,
@@ -1513,7 +1548,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         })),
                     }),
                 });
-                if (!response.ok) throw new Error(`Failed to post offer: ${response.statusText}`);
+                if (!response.ok) throw new Error(await describeApiError(response, 'Failed to post offer'));
                 const data = await response.json();
                 if (!data.success) throw new Error(data.message);
                 setStatus('Offer posted successfully on Hedera.', false);
@@ -1525,7 +1560,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 await fetchAndRenderOffers();
                 await fetchAndRenderMyOffers();
             } catch (error) {
-                setStatus(error.message, true);
+                // Kept ON SCREEN (persistent) and logged with the cause chain:
+                // this error hides itself after 6 s otherwise, and a user whose
+                // wallet paid for a transaction that then failed to record has
+                // no evidence of what went wrong left to report.
+                console.error('[EnergySwap] offer submission failed:', error, {
+                    cause: error?.cause ?? null,
+                    accountId: connectedAccountId,
+                });
+                setStatus(error.message, true, true);
             } finally {
                 if (submitBtn) submitBtn.disabled = false;
             }

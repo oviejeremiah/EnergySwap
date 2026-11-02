@@ -1025,6 +1025,12 @@
                    viewport as soon as a message rendered. Clamp instead. */
                 width: min(380px, calc(100% - 32px));
                 min-width: 0;
+                /* The role screen paints .role-content over this absolutely
+                   positioned box: elementFromPoint at the box's own coordinates
+                   resolved to P.wallet-any-desc, so every real mouse click was
+                   swallowed by that overlay while the message stayed visible.
+                   Lift the box above the screen content in the stacking order. */
+                z-index: 50;
             }
 
             /* ═══════════════════════════════════════════════════
@@ -2343,13 +2349,32 @@
                 color: var(--red);
                 border: 1px solid rgba(255, 107, 107, 0.22);
             }
-            .status-box a {
-                color: inherit;
+            .hashpack-install-btn {
+                color: #fff;
                 text-decoration: underline;
                 text-underline-offset: 2px;
+                display: inline-block;
+                padding: 8px 14px;
+                margin: 4px 0;
+                border-radius: 8px;
+                background: rgba(255, 255, 255, 0.18);
+                border: 1px solid rgba(255, 255, 255, 0.35);
+                cursor: pointer;
+                font-weight: 600;
+                font-size: 13px;
+                line-height: 1.4;
+                font-family: inherit;
+                text-align: center;
             }
-            .status-box a:hover {
-                opacity: 0.9;
+            .hashpack-install-btn:hover {
+                opacity: 1;
+                background: rgba(255, 255, 255, 0.28);
+                border-color: rgba(255, 255, 255, 0.5);
+                transform: translateY(-1px);
+            }
+            .hashpack-install-btn:active {
+                transform: scale(0.97);
+                background: rgba(255, 255, 255, 0.12);
             }
 
             /* ═══════════════════════════════════════════════════
@@ -2907,6 +2932,22 @@
                 .btn-select,
                 .status-pill {
                     width: 100%;
+                }
+                /* Make the HashPack install link a clear tap target on small screens. */
+                #role-status {
+                    width: min(320px, calc(100vw - 24px));
+                    bottom: 16px;
+                }
+                .status-box {
+                    font-size: 14px;
+                    line-height: 1.5;
+                    padding: 14px 16px;
+                }
+                .status-box a {
+                    display: inline-block;
+                    padding: 8px 14px;
+                    margin: 6px 0;
+                    border-radius: 8px;
                 }
             }
 
