@@ -32,3 +32,7 @@ strix_runs/
 *.key
 *.log
 npm-debug.log*
+
+# Temporary capture of rejected wallet signatures, for offline encoding diagnosis.
+# Not a secret: a signature is public, and the message is a spent nonce.
+**/.debug-captures/
