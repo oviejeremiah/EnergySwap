@@ -37,23 +37,27 @@ const TX_ID = '0.0.999@1.000000901';
 // ─── fixtures ─────────────────────────────────────────────────────────────────
 
 /**
- * Build a stand-in for a Hedera TransactionRecord.
+ * Build a stand-in for a transaction record, in the normalised shape that
+ * mirror-node.js produces and that server.js actually reads: `status`,
+ * `payerAccountId`, `memo`, `transfers` as `{accountId, amountTinybars}`, and
+ * `transactionFeeTinybars` as an exact decimal string.
  *
- * The shapes mirror what server.js actually reads: `receipt.status.toString()`,
- * `transactionId.accountId.toString()`, `transactionMemo`, `transfers[]` with
- * `accountId.toString()` / `amount.toTinybars()`, and `transactionFee`.
+ * The previous shape was the SDK's TransactionRecord - `receipt.status`,
+ * `transactionId.accountId`, `amount.toTinybars()`. It is gone because the SDK
+ * query that produced it cannot run in this platform at all: it demands an
+ * operator the API deliberately does not hold.
  */
 function chainRecord({ payer = BUYER, memo = `EnergySwap ${OFFER_ID}`, status = 'SUCCESS', fee = FEE_TINYBARS, transfers }) {
     return {
-        receipt: { status: { toString: () => status } },
-        transactionId: { accountId: { toString: () => payer } },
-        transactionMemo: memo,
+        status,
+        payerAccountId: payer,
+        memo,
+        transactionFeeTinybars: fee === null ? null : String(fee),
         transfers: transfers.map((t) => ({
-            accountId: { toString: () => t.account },
-            amount: { toTinybars: () => String(t.tinybars) },
-            tokenId: t.tokenId ?? null,
+            accountId: t.account,
+            amountTinybars: String(t.tinybars),
         })),
-        transactionFee: { toTinybars: () => String(fee) },
+        tokenTransfers: [],
     };
 }
 
@@ -124,16 +128,21 @@ function createTradeRepository({ offerKwh = KWH, tradeKwh = KWH, offerStatus = '
 }
 
 /** Swap the repository and the chain's answer for the duration of `fn`. */
-async function withScenario({ record = settledTransfer(), repository = createTradeRepository(), config, fetchStub }, fn) {
+async function withScenario({ record = settledTransfer(), repository = createTradeRepository(), config, fetchStub, queryRecord }, fn) {
     const prior = {
         repository: app.locals.repository,
         config: app.locals.config,
         createHederaClient: app.locals.createHederaClient,
-        execute: sdk.TransactionRecordQuery.prototype.execute,
+        queryTransactionRecord: app.locals.queryTransactionRecord,
         fetch: global.fetch,
     };
-    sdk.TransactionRecordQuery.prototype.execute = async () => record;
-    // A client with no operator is enough: execute() above short-circuits the
+    // A caller-supplied queryRecord takes precedence, so a test can vary the
+    // record per assertion - which is exactly what a fee-payer check needs.
+    // Otherwise the mirror-node reader is stubbed wholesale: the route reads
+    // the chain through this one seam, so stubbing it keeps the whole suite
+    // offline and independent of testnet.
+    app.locals.queryTransactionRecord = queryRecord || (async () => record);
+    // A client with no operator is enough: the reader above short-circuits the
     // network entirely, and this proves the route never signs anything.
     app.locals.createHederaClient = () => ({ close() {} });
     app.locals.repository = repository;
@@ -142,8 +151,8 @@ async function withScenario({ record = settledTransfer(), repository = createTra
     try {
         return await fn({ repository });
     } finally {
-        sdk.TransactionRecordQuery.prototype.execute = prior.execute;
         app.locals.createHederaClient = prior.createHederaClient;
+        app.locals.queryTransactionRecord = prior.queryTransactionRecord;
         app.locals.repository = prior.repository;
         app.locals.config = prior.config;
         global.fetch = prior.fetch;
@@ -498,10 +507,7 @@ test('the unlink route refuses an unauthenticated delete and honours a signed on
 
 // ─── scenario 3: failed signature on the offer-posting path ───────────────────
 
-test('a failed wallet signature refuses the offer, a valid one accepts it', async () => {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-    const rawKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(12);
-
+test('an offer needs proof from the account that claims to be the producer', async () => {
     let posted = 0;
     const repository = {
         async createOffer(offer) {
@@ -510,53 +516,96 @@ test('a failed wallet signature refuses the offer, a valid one accepts it', asyn
         },
     };
 
-    const mirrorNode = async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ account: SELLER, key: { _type: 'ED25519', key: rawKey.toString('hex') } }),
+    // Stands in for the network read. The payer is what the server checks, so
+    // each case differs only in who paid and what memo was attached. The shape
+    // is the normalised one mirror-node.js produces.
+    let payer = SELLER;
+    let memo = '';
+    const queryStub = async () => ({
+        status: 'SUCCESS',
+        payerAccountId: payer,
+        memo,
     });
 
     await withScenario(
-        { repository, config: { requireWalletSignature: true }, fetchStub: mirrorNode },
+        { repository, config: { requireWalletSignature: true }, queryRecord: queryStub },
         async () => {
-            // No challenge at all.
-            const noChallenge = await request(app)
+            // No proof at all.
+            const noProof = await request(app)
                 .post('/api/post-offer')
                 .send({ prosumerId: SELLER, energyAmountKWh: 10, hbarPerKWh: 0.5 });
-            assert.equal(noChallenge.status, 401);
-            assert.equal(posted, 0);
+            assert.equal(noProof.status, 401);
+            assert.equal(posted, 0, 'an offer with no proof must never be stored');
 
-            // A signature from a key that is not the account's.
-            const challenge = await request(app).get('/api/wallet-auth/challenge').query({ accountId: SELLER }).expect(200);
-            const impostor = crypto.generateKeyPairSync('ed25519');
-            const wrongKey = await request(app)
+            // A transaction somebody else paid for. The fee payer is
+            // authoritative, so this cannot prove control of SELLER.
+            const c1 = await request(app)
+                .get('/api/wallet-auth/proof-challenge')
+                .query({ accountId: SELLER })
+                .expect(200);
+            payer = '0.0.111111';
+            memo = c1.body.memo;
+            const impostor = await request(app)
                 .post('/api/post-offer')
                 .send({
                     prosumerId: SELLER,
                     energyAmountKWh: 10,
                     hbarPerKWh: 0.5,
-                    challengeNonce: challenge.body.nonce,
-                    challengeSignature: crypto
-                        .sign(null, Buffer.from(challenge.body.message, 'utf8'), impostor.privateKey)
-                        .toString('base64'),
+                    proofNonce: c1.body.nonce,
+                    proofTransactionId: '0.0.999999@1.000000010',
                 });
-            assert.equal(wrongKey.status, 401);
+            assert.equal(impostor.status, 401, 'a transaction paid by another account must be refused');
             assert.equal(posted, 0);
 
-            // The genuine owner.
-            const good = await request(app).get('/api/wallet-auth/challenge').query({ accountId: SELLER }).expect(200);
+            // Paid by the right account, but carrying someone else's memo.
+            const c2 = await request(app)
+                .get('/api/wallet-auth/proof-challenge')
+                .query({ accountId: SELLER })
+                .expect(200);
+            payer = SELLER;
+            memo = 'unrelated memo';
+            const wrongMemo = await request(app)
+                .post('/api/post-offer')
+                .send({
+                    prosumerId: SELLER,
+                    energyAmountKWh: 10,
+                    hbarPerKWh: 0.5,
+                    proofNonce: c2.body.nonce,
+                    proofTransactionId: '0.0.999999@1.000000011',
+                });
+            assert.equal(wrongMemo.status, 401, 'a proof without this nonce must be refused');
+            assert.equal(posted, 0);
+
+            // The genuine account: it paid for a transaction carrying its nonce.
+            const c3 = await request(app)
+                .get('/api/wallet-auth/proof-challenge')
+                .query({ accountId: SELLER })
+                .expect(200);
+            payer = SELLER;
+            memo = c3.body.memo;
             const accepted = await request(app)
                 .post('/api/post-offer')
                 .send({
                     prosumerId: SELLER,
                     energyAmountKWh: 10,
                     hbarPerKWh: 0.5,
-                    challengeNonce: good.body.nonce,
-                    challengeSignature: crypto
-                        .sign(null, Buffer.from(good.body.message, 'utf8'), privateKey)
-                        .toString('base64'),
+                    proofNonce: c3.body.nonce,
+                    proofTransactionId: '0.0.999999@1.000000012',
                 });
-            assert.equal(accepted.status, 201, JSON.stringify(accepted.body));
+            assert.equal(accepted.status, 201);
+            assert.equal(posted, 1, 'the genuine proof must let the offer through');
+
+            // Replaying that proof must not work a second time.
+            const replay = await request(app)
+                .post('/api/post-offer')
+                .send({
+                    prosumerId: SELLER,
+                    energyAmountKWh: 10,
+                    hbarPerKWh: 0.5,
+                    proofNonce: c3.body.nonce,
+                    proofTransactionId: '0.0.999999@1.000000012',
+                });
+            assert.equal(replay.status, 401, 'a proof is single use');
             assert.equal(posted, 1);
         },
     );

@@ -27,7 +27,10 @@ const https = require('https');
 const http = require('http');
 const { randomUUID } = require('node:crypto');
 const { getHbarPrice, getPrices, getOhlc, listSymbols, listTimeframes } = require('./priceService');
-const { issueChallenge, verifyChallenge } = require('./wallet-auth');
+const { issueProofChallenge, verifyTransactionProof } = require('./wallet-auth');
+const { fetchTransactionRecord, fetchTopicMessage } = require('./mirror-node');
+const { settlementError } = require('./settlement-check');
+const { attestationError } = require('./attestation-check');
 // isHederaAccountId is deliberately not imported from here: this file has its
 // own stricter version that additionally round-trips through the Hedera SDK.
 const {
@@ -45,7 +48,6 @@ const {
     AccountId,
     Client,
     TransactionId,
-    TransactionRecordQuery,
 } = require('@hashgraph/sdk');
 const {
     canonicalizeReading,
@@ -61,14 +63,52 @@ app.disable('x-powered-by');
 app.set('trust proxy', config.nodeEnv === 'production' ? 1 : false);
 app.locals.repository = repository;
 app.locals.config = config;
-app.locals.createHederaClient = () => Client.forTestnet();
+// A read-only Hedera client. It carries no operator, by design: prosumers and
+// consumers sign for themselves and this service only reads. Anything added here
+// must keep it that way.
+//
+// The network is taken from configuration rather than hardcoded so migration to
+// mainnet does not leave this service reading one chain while the UI writes to
+// another - a failure that looks like everything working.
+app.locals.createHederaClient = () =>
+    app.locals.config.hederaNetwork === 'mainnet' ? Client.forMainnet() : Client.forTestnet();
+
+// Reads a submitted transaction from the network, reduced to the facts proof
+// depends on: did it succeed, who paid for it, and what did it say.
+//
+// This goes through the mirror node's REST API rather than
+// TransactionRecordQuery because the SDK query cannot work in this platform: in
+// @hashgraph/sdk 2.81.0 `Query._isPaymentRequired()` returns true and
+// TransactionRecordQuery does not override it, so the SDK demands an operator
+// and refuses with "client must have an `operator` or an explicit payment
+// transaction must be provided". EnergySwap holds no signing identity by
+// design - prosumers and consumers sign for themselves and this service only
+// reads - so that route was never available. The REST API needs no key.
+//
+// Injectable so the offer-proof route can be tested without reaching Hedera,
+// and so the network read lives in one place rather than inline in a handler.
+app.locals.queryTransactionRecord = (transactionId) =>
+    fetchTransactionRecord({
+        mirrorNodeUrl: app.locals.config.hederaMirrorNodeUrl,
+        transactionId,
+    });
+// Reads back the consensus message a transaction carried, so a successful
+// transaction can be checked against what it actually said. Injectable for the
+// same reason as the record reader above.
+app.locals.fetchTopicMessage = (topicId, consensusTimestamp) =>
+    fetchTopicMessage({
+        mirrorNodeUrl: app.locals.config.hederaMirrorNodeUrl,
+        topicId,
+        consensusTimestamp,
+    });
+
 // Chain WRITES are performed by the meter gateway with its own key, so this
 // service deliberately exposes no signing helpers. Only read-only queries are
 // kept here, for verifying transactions the gateway reports back.
-app.locals.getHcsConsensusTimestamp = async (client, transactionId) => {
-    const record = await new TransactionRecordQuery().setTransactionId(transactionId).execute(client);
-    return record.consensusTimestamp?.toDate().toISOString() || null;
-};
+//
+// Reads go through app.locals.queryTransactionRecord above. There is no client
+// to close: the mirror node is reached over plain HTTP and holds no connection,
+// and no signing key is involved on any of these paths.
 
 const writeRateLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -191,12 +231,18 @@ function logNewsKeyStatus() {
 // ═══════════════════════════════════════════════════════════════════
 // ─── WALLET OWNERSHIP ───────────────────────────────────────────────────────
 // Proves the caller controls the Hedera account they claim. Gated behind
-// REQUIRE_WALLET_SIGNATURE so existing flows keep working until enabled.
+// REQUIRE_WALLET_SIGNATURE.
+//
+// Proof is a transaction the account signed and paid for, not a wallet message
+// signature. Message signing could not be made to verify against a real wallet:
+// the signatures were structurally valid ECDSA yet matched no encoding, digest
+// or wrapper of the challenge. A transaction's fee payer is authoritative and
+// cannot be spoofed, which is the property /api/record-trade already relies on.
 
 // Rate limited like every other route that allocates server-side state. Issuing
 // a challenge creates a nonce entry, so an unlimited endpoint is an unlimited
 // allocation endpoint.
-app.get('/api/wallet-auth/challenge', writeRateLimiter, (req, res) => {
+app.get('/api/wallet-auth/proof-challenge', writeRateLimiter, (req, res) => {
     if (!app.locals.config.requireWalletSignature) {
         return res.status(404).json({ success: false, message: 'Wallet authentication is not enabled.' });
     }
@@ -208,8 +254,17 @@ app.get('/api/wallet-auth/challenge', writeRateLimiter, (req, res) => {
         });
     }
     const network = app.locals.config.hederaNetwork === 'mainnet' ? 'mainnet' : 'testnet';
-    res.json({ success: true, ...issueChallenge(accountId, network) });
+    res.json({ success: true, ...issueProofChallenge(accountId, network) });
 });
+
+/**
+ * Issue a challenge that is proved by a transaction rather than a message.
+ *
+ * The network reported here is the one the client must build for. Posting an
+ * offer therefore works identically on testnet and on mainnet, differing only
+ * in which network the wallet is pointed at - the token balance comes from the
+ * account, not from anything the platform holds.
+ */
 
 // ═══════════════════════════════════════════════════════════════════
 //  ON-CHAIN IDENTITY BINDINGS
@@ -423,15 +478,19 @@ app.post('/api/post-offer', writeRateLimiter, async (req, res) => {
                     'prosumerId must be a Hedera account ID in the form 0.0.1234. EnergySwap settles in HBAR, so a non-Hedera wallet cannot post an offer.',
             });
 
-        // Prove the caller actually controls the account they claim.
+        // Prove the caller controls the account they claim.
+        //
+        // Proof is a transaction they signed and paid for, carrying a
+        // server-issued nonce, read back from the network. The fee payer is
+        // authoritative and cannot be spoofed, so this needs no wallet
+        // cryptography and no assumptions about signature encoding - the reason
+        // the previous message-signing path was replaced.
         if (app.locals.config.requireWalletSignature) {
-            const verification = await verifyChallenge({
+            const verification = await verifyTransactionProof({
                 accountId: prosumerId.trim(),
-                nonce: req.body.challengeNonce,
-                signature: req.body.challengeSignature,
-                mirrorNodeUrl: app.locals.config.hederaMirrorNodeUrl,
-                expectedNetwork: app.locals.config.hederaNetwork === 'mainnet' ? 'mainnet' : 'testnet',
-                maxAgeMs: app.locals.config.walletSignatureMaxAgeMs,
+                nonce: req.body.proofNonce,
+                transactionId: req.body.proofTransactionId,
+                queryRecord: (txId) => app.locals.queryTransactionRecord(txId),
             });
             if (!verification.ok) {
                 return res.status(401).json({
@@ -635,33 +694,38 @@ app.post('/api/oracle/readings', writeRateLimiter, async (req, res) => {
  * @param {number|bigint} tokenUnits
  * @param {string} energyTokenId  The token that must appear on the credit leg.
  */
+/**
+ * Check that a transaction really credited the prosumer in energy tokens.
+ *
+ * Reads the normalised record from mirror-node.js: `tokenTransfers` carries
+ * `{accountId, tokenId, amount}` with the amount as an exact decimal string.
+ *
+ * The prosumumer RECEIVES the tokens, so their leg is positive. Requiring a
+ * negative leg would reject every valid credit.
+ */
 function htsCreditError(htsRecord, prosumerId, tokenUnits, energyTokenId) {
     const expectedToken = String(energyTokenId || '');
     if (!expectedToken) {
         return 'Energy token is not configured, so a credit cannot be verified.';
     }
 
-    const matchesToken = (leg) => String(leg?.tokenId ?? '') === expectedToken;
+    // Only token legs are considered. The mirror node's HBAR legs carry no token
+    // id and are normalised out entirely, so a plain HBAR payment can never be
+    // read as a token credit here.
+    const tokenLegs = htsRecord?.tokenTransfers || [];
 
-    // The prosumer RECEIVES the energy tokens, so their leg of the transfer is
-    // positive. Looking for a negative leg here would reject every valid credit.
-    const credit = (htsRecord?.transfers || []).find(
-        (t) =>
-            t.accountId.toString() === prosumerId &&
-            BigInt(t.amount.toTinybars()) > BigInt(0) &&
-            matchesToken(t),
+    const credit = tokenLegs.find(
+        (leg) => leg.accountId === prosumerId && BigInt(leg.amount) > BigInt(0) && leg.tokenId === expectedToken,
     );
     if (!credit) {
         // Distinguish "wrong instrument" from "no credit at all" so the failure
         // is diagnosable rather than merely refused.
-        const paidInHbar = (htsRecord?.transfers || []).some(
-            (t) => t.accountId.toString() === prosumerId && !t.tokenId,
-        );
+        const paidInHbar = (htsRecord?.transfers || []).some((leg) => leg.accountId === prosumerId);
         return paidInHbar
             ? 'The reported transaction paid the prosumer in HBAR, not in energy tokens.'
             : 'The reported HTS transaction does not credit the prosumer in energy tokens.';
     }
-    if (BigInt(credit.amount.toTinybars()) !== BigInt(tokenUnits)) {
+    if (BigInt(credit.amount) !== BigInt(tokenUnits)) {
         return 'The reported HTS transaction credits a different amount than the attested energy.';
     }
     return null;
@@ -696,12 +760,48 @@ app.post('/api/oracle/readings/:readingId/settlement', writeRateLimiter, async (
         });
     }
 
-    const client = app.locals.createHederaClient();
+    // Both transactions are read through the mirror node's REST API rather than
+    // TransactionRecordQuery: the SDK query demands an operator this platform
+    // deliberately does not have, so it could never have run here. See
+    // mirror-node.js. The gateway holds the signing key and pays the fees; this
+    // service only reads.
     try {
-        const hcsId = TransactionId.fromString(hcsTransactionId);
-        const hcsRecord = await new TransactionRecordQuery().setTransactionId(hcsId).execute(client);
-        if (hcsRecord.receipt?.status?.toString() !== 'SUCCESS') {
+        const hcsRecord = await app.locals.queryTransactionRecord(hcsTransactionId);
+        if (!hcsRecord || hcsRecord.status !== 'SUCCESS') {
             return res.status(400).json({ success: false, message: 'The reported HCS transaction did not succeed.' });
+        }
+
+        // A successful transaction is not evidence. The meter topic has no submit
+        // key, so any account can post to it, and "the transaction succeeded"
+        // says nothing about what it carried. Read the message back at the exact
+        // consensus timestamp and require it to be this reading's attestation,
+        // signed by the gateway.
+        //
+        // Without this, anyone could post a message, take the resulting
+        // transaction id, report it, and the reading's audit trail would point at
+        // an unrelated message.
+        const attestation = await app.locals.fetchTopicMessage(
+            app.locals.config.hcsTopicId,
+            hcsRecord.consensusTimestampRaw,
+        );
+        if (!attestation) {
+            return res.status(400).json({
+                success: false,
+                message: 'The reported HCS transaction carries no attestation message for this topic.',
+                readingId: reading.readingId,
+            });
+        }
+
+        const attestationProblem = attestationError(attestation.message, {
+            reading,
+            publicKeyPem: app.locals.config.meterOraclePublicKey,
+        });
+        if (attestationProblem) {
+            return res.status(400).json({
+                success: false,
+                message: `${attestationProblem} The reading stays pending.`,
+                readingId: reading.readingId,
+            });
         }
 
         let record = await app.locals.repository.updateMeterReading(reading.readingId, {
@@ -712,7 +812,7 @@ app.post('/api/oracle/readings/:readingId/settlement', writeRateLimiter, async (
         });
 
         try {
-            const consensusTimestamp = await app.locals.getHcsConsensusTimestamp(client, hcsId);
+            const consensusTimestamp = hcsRecord.consensusTimestamp;
             if (consensusTimestamp) {
                 record = await app.locals.repository.updateMeterReading(reading.readingId, {
                     hcsConsensusTimestamp: consensusTimestamp,
@@ -726,9 +826,8 @@ app.post('/api/oracle/readings/:readingId/settlement', writeRateLimiter, async (
             status: 'credit_pending',
         });
 
-        const htsId = TransactionId.fromString(htsTransactionId);
-        const htsRecord = await new TransactionRecordQuery().setTransactionId(htsId).execute(client);
-        if (htsRecord.receipt?.status?.toString() !== 'SUCCESS') {
+        const htsRecord = await app.locals.queryTransactionRecord(htsTransactionId);
+        if (!htsRecord || htsRecord.status !== 'SUCCESS') {
             return res.status(400).json({
                 success: false,
                 message: 'The reported HTS credit transaction did not succeed; the reading stays pending.',
@@ -772,9 +871,10 @@ app.post('/api/oracle/readings/:readingId/settlement', writeRateLimiter, async (
             message: 'Could not verify the reported settlement transactions.',
             readingId: reading.readingId,
         });
-    } finally {
-        client.close();
     }
+    // No client to close here: both transactions and the consensus message are
+    // read over plain HTTP by the mirror-node readers, which hold no connection
+    // and use no signing key.
 });
 
 app.get('/api/oracle/readings/:readingId', async (req, res) => {
@@ -888,7 +988,7 @@ app.post('/api/record-trade', writeRateLimiter, async (req, res) => {
         });
     }
 
-    let client;
+    let transactionRecord;
     try {
         const offer = await app.locals.repository.getOffer(offerId);
         if (!offer)
@@ -921,38 +1021,30 @@ app.post('/api/record-trade', writeRateLimiter, async (req, res) => {
                 .status(400)
                 .json({ success: false, message: 'Trade amount is below the supported HBAR precision.' });
 
-        // Read-only verification. TransactionRecordQuery is a query, not a
-        // transaction, so it needs no signing key. The platform deliberately
-        // holds no operator credentials on this path: the consumer's own
-        // wallet signed and paid the HBAR transfer, and the blockchain
-        // recorded it. Nothing here can move funds.
-        client = app.locals.createHederaClient();
-        const transactionRecord = await new TransactionRecordQuery()
-            .setTransactionId(parsedTransactionId)
-            .execute(client);
-        if (transactionRecord.receipt?.status?.toString() !== 'SUCCESS')
-            return res.status(400).json({ success: false, message: 'Hedera transaction did not succeed.' });
-        if (transactionRecord.transactionId.accountId?.toString() !== consumerAccountId)
-            return res.status(400).json({ success: false, message: 'The consumer must be the transaction fee payer.' });
-        if (transactionRecord.transactionMemo !== `EnergySwap ${offer.id}`)
-            return res
-                .status(400)
-                .json({ success: false, message: 'Transaction memo does not match the selected offer.' });
+        // Read-only verification. The consumer's own wallet signed and paid the
+        // HBAR transfer, and the mirror node reports what the network recorded.
+        // Nothing here can move funds, and this path holds no signing key by
+        // design.
+        //
+        // The read goes through the mirror node's REST API rather than
+        // TransactionRecordQuery because the SDK query demands an operator this
+        // platform deliberately does not have - see mirror-node.js. That is not
+        // a recent regression: the SDK query was used here from the start, so
+        // this check could never have passed against the live network.
+        transactionRecord = await app.locals.queryTransactionRecord(transactionId);
 
         const expectedTinybars = BigInt(Math.round(hbarAmount * 100_000_000));
-        const sellerTransfer = transactionRecord.transfers.find((t) => t.accountId.toString() === offer.prosumerId);
-        const buyerTransfer = transactionRecord.transfers.find((t) => t.accountId.toString() === consumerAccountId);
-        const feeTinybars = BigInt(transactionRecord.transactionFee.toTinybars().toString());
-        if (!sellerTransfer || BigInt(sellerTransfer.amount.toTinybars().toString()) !== expectedTinybars)
-            return res.status(400).json({
-                success: false,
-                message: 'Confirmed transaction does not pay the posted offer amount to the prosumer.',
-            });
-        if (!buyerTransfer || -BigInt(buyerTransfer.amount.toTinybars().toString()) !== expectedTinybars + feeTinybars)
-            return res.status(400).json({
-                success: false,
-                message: 'Confirmed transaction does not charge the consumer for the offer and network fee.',
-            });
+        const settlementProblem = settlementError(transactionRecord, {
+            consumerAccountId,
+            prosumerId: offer.prosumerId,
+            expectedTinybars,
+            expectedMemo: `EnergySwap ${offer.id}`,
+        });
+        if (settlementProblem) {
+            return res.status(400).json({ success: false, message: settlementProblem });
+        }
+
+        const feeTinybars = BigInt(transactionRecord.transactionFeeTinybars);
 
         const gasFeeHbar = Number(feeTinybars) / 100_000_000;
         const totalHbarPaid = Number((hbarAmount + gasFeeHbar).toFixed(8));
@@ -1006,9 +1098,9 @@ app.post('/api/record-trade', writeRateLimiter, async (req, res) => {
     } catch (e) {
         console.error('[Trade] Error:', e.message, 'requestId:', req.requestId);
         res.status(500).json({ success: false, message: 'Failed to record the confirmed trade.' });
-    } finally {
-        if (client) client.close();
     }
+    // No client to close: the mirror node read goes over plain HTTP and holds
+    // no connection, and this path owns no signing key.
 });
 
 app.get('/api/trades', async (req, res) => {

@@ -19,9 +19,29 @@ const SELLER = '0.0.6242999';
 
 function withRepository(repository, fn) {
     const prior = app.locals.repository;
+    const priorReader = app.locals.queryTransactionRecord;
     app.locals.repository = repository;
     return Promise.resolve(fn()).finally(() => {
         app.locals.repository = prior;
+        app.locals.queryTransactionRecord = priorReader;
+    });
+}
+
+/**
+ * A settled payment of `amountTinybars` from BUYER to SELLER, in the normalised
+ * record shape the mirror-node reader produces.
+ */
+function settledBy(amountTinybars, fee = '293398') {
+    app.locals.queryTransactionRecord = async () => ({
+        status: 'SUCCESS',
+        payerAccountId: BUYER,
+        memo: `EnergySwap ${OFFER_ID}`,
+        transactionFeeTinybars: fee,
+        transfers: [
+            { accountId: SELLER, amountTinybars: String(amountTinybars) },
+            { accountId: BUYER, amountTinybars: `-${BigInt(amountTinybars) + BigInt(fee)}` },
+        ],
+        tokenTransfers: [],
     });
 }
 
@@ -75,10 +95,16 @@ test('a trade within the offer is not blocked by the ceiling', async () => {
                 status: 'available',
             };
         },
-        async recordTrade() {
-            throw new Error('recordTrade is stubbed out; this test only proves the guard passed it');
+        async recordTrade(trade) {
+            // Returning a recorded trade rather than throwing: a throw surfaces
+            // as a 500, which proves the guard let the claim through but reads
+            // as a failure of the route rather than a success of the test.
+            return { kind: 'recorded', trade: { ...trade, status: 'completed' } };
         },
     };
+
+    // 10 kWh at 0.5 HBAR/kWh is 5 HBAR, in tinybars.
+    settledBy(500_000_000);
 
     await withRepository(repository, async () => {
         const response = await request(app)
@@ -90,10 +116,11 @@ test('a trade within the offer is not blocked by the ceiling', async () => {
                 transactionId: '0.0.999@1.000000457',
             });
 
-        // Getting past the ceiling and failing later (in the stubbed chain
-        // verification) is success for this assertion: the 400 would mean the
-        // guard rejected a legitimate claim.
-        assert.notEqual(response.status, 400);
+        // The claim is legitimate and the payment matches, so this records.
+        // Asserting a completed trade is stronger than the assertion this
+        // replaced, which accepted any non-400 - including a 400 from a later
+        // check that has nothing to do with the ceiling it was written to guard.
+        assert.equal(response.status, 201, response.body?.message);
         assert.doesNotMatch(response.body?.message ?? '', /only has .* kWh available/);
     });
 });

@@ -135,60 +135,72 @@ test('the gateway can attest a reading and the API returns settlement instructio
 test('energy is only released when the reported HTS transaction really credited the prosumer', () => {
     const prosumer = '0.0.12345';
     const units = 1250;
-    // The credit must be in the energy token. HBAR legs carry no tokenId and
-    // are scaled in tinybar, so a transfer that omits it is not evidence of a
-    // token credit.
+    // The credit must be in the energy token. HBAR legs carry no token id and are
+    // reported separately from token legs, so an HBAR payment of the same size is
+    // not evidence of a token credit.
     const token = '0.0.6241546';
-    const transfer = (account, tinybars, tokenId = token) => ({
-        accountId: { toString: () => account },
-        amount: { toTinybars: () => String(tinybars) },
-        tokenId: tokenId ? { toString: () => tokenId } : null,
+
+    // Records are normalised by mirror-node.js into two separate lists, and the
+    // separation is what stops an HBAR payment reading as a token credit.
+    const tokenRecord = (legs) => ({
+        tokenTransfers: legs.map(([account, amount]) => ({ accountId: account, tokenId: token, amount: String(amount) })),
+        transfers: [],
+    });
+    const hbarRecord = (legs) => ({
+        tokenTransfers: [],
+        transfers: legs.map(([account, amountTinybars]) => ({ accountId: account, amountTinybars: String(amountTinybars) })),
     });
 
     // Correct credit: the prosumer receives exactly the attested amount.
     assert.equal(
-        htsCreditError({ transfers: [transfer('0.0.55555', -units), transfer(prosumer, units)] }, prosumer, units, token),
+        htsCreditError(tokenRecord([['0.0.55555', -units], [prosumer, units]]), prosumer, units, token),
         null,
     );
 
     // A plain HBAR payment of the same size is not a token credit.
     assert.match(
-        htsCreditError(
-            { transfers: [transfer('0.0.55555', -units, null), transfer(prosumer, units, null)] },
-            prosumer,
-            units,
-            token,
-        ),
+        htsCreditError(hbarRecord([['0.0.55555', -units], [prosumer, units]]), prosumer, units, token),
         /HBAR, not in energy tokens/,
     );
 
     // Nothing moved to the prosumer.
-    assert.match(
-        htsCreditError({ transfers: [] }, prosumer, units, token),
-        /does not credit the prosumer/,
-    );
+    assert.match(htsCreditError(tokenRecord([]), prosumer, units, token), /does not credit the prosumer/);
 
     // Only the gateway was debited, with no matching credit.
     assert.match(
-        htsCreditError({ transfers: [transfer('0.0.55555', -units)] }, prosumer, units, token),
+        htsCreditError(tokenRecord([['0.0.55555', -units]]), prosumer, units, token),
         /does not credit the prosumer/,
     );
 
     // A short credit must not pass as a full one.
     assert.match(
-        htsCreditError({ transfers: [transfer('0.0.55555', -999), transfer(prosumer, 999)] }, prosumer, units, token),
+        htsCreditError(tokenRecord([['0.0.55555', -999], [prosumer, 999]]), prosumer, units, token),
         /credits a different amount/,
     );
 
     // Crediting somebody else must not satisfy the check.
     assert.match(
-        htsCreditError({ transfers: [transfer('0.0.55555', -units), transfer('0.0.99999', units)] }, prosumer, units, token),
+        htsCreditError(tokenRecord([['0.0.55555', -units], ['0.0.99999', units]]), prosumer, units, token),
         /does not credit the prosumer/,
     );
 
     // A prosumuer paying out (negative delta) is not a credit.
     assert.match(
-        htsCreditError({ transfers: [transfer(prosumer, -units)] }, prosumer, units, token),
+        htsCreditError(tokenRecord([[prosumer, -units]]), prosumer, units, token),
+        /does not credit the prosumer/,
+    );
+
+    // A credit in a different token is not a credit in the energy token.
+    assert.match(
+        htsCreditError(
+            {
+                tokenTransfers: [{ accountId: prosumer, tokenId: '0.0.999999', amount: String(units) }],
+                transfers: [],
+            },
+            prosumer,
+            units,
+            token,
+        ),
         /does not credit the prosumer/,
     );
 
