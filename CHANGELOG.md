@@ -114,7 +114,14 @@ independently verifiable by anyone against the public mirror. No private keys,
 credentials, or enabling detail for any network appear in any tracked file.
 
 ## Open items before the mainnet migration
-- Triage Dependabot's dependency alerts (reported at the `95bfa95` push).
+- ~~Triage Dependabot's dependency alerts (reported at the `95bfa95` push).~~
+  **Done 2026-11-02 (see `SECURITY.md`):** the stale root monolith manifest was
+  pruned (90 alerts gone), and every production-reachable critical and high
+  advisory is remediated — backend audits **0 critical / 0 high** with the full
+  213-passing suite green, frontend audits 0 critical with 46/46 tests and a
+  green build. The residual high alerts have no fixed versions upstream
+  (`@reown/appkit` family, `zod` via the wallet-connect chain) and are recorded
+  as documented accepted risks.
 - HCS attestation topic submit-key policy and topic split.
 - KYC / regulatory framing for public communications.
 - The mainnet guard (`config.js` rejects any `HEDERA_NETWORK` other than

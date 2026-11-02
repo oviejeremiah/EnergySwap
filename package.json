@@ -1,7 +1,7 @@
 {
   "name": "energyswap",
   "version": "1.0.0",
-  "main": "index.js",
+  "private": true,
   "scripts": {
     "start": "npm run dev",
     "dev": "concurrently -n backend,frontend -c cyan,magenta \"npm --prefix EnergySwapBackend run start\" \"npm --prefix EnergySwapFrontend run dev -- --host 0.0.0.0\"",
@@ -15,14 +15,6 @@
   "author": "",
   "license": "Apache-2.0",
   "description": "Hedera-based peer-to-peer energy trading prototype",
-  "dependencies": {
-    "@hashgraph/sdk": "^2.67.0",
-    "axios": "^1.10.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.6.0",
-    "express": "^5.1.0",
-    "lowdb": "^7.0.1"
-  },
   "devDependencies": {
     "concurrently": "^10.0.5"
   }

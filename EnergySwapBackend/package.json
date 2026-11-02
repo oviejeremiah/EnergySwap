@@ -28,6 +28,10 @@
     "helmet": "^8.1.0",
     "pg": "^8.16.3"
   },
+  "overrides": {
+    "protobufjs": ">=8.6.6 || ^7.5.6",
+    "@grpc/grpc-js": "^1.13.6"
+  },
   "devDependencies": {
     "nodemon": "^3.1.14",
     "supertest": "^7.1.4"
